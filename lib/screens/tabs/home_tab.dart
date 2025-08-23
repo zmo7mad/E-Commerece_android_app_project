@@ -3,218 +3,803 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:e_commerece/providers/cart_provider.dart';
 import 'package:e_commerece/shared/firebase.dart';
+import 'package:animations/animations.dart';
+import 'package:e_commerece/screens/product/item_screen.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
-// Inline provider for products
-final productsProvider = FutureProvider<List<Map<String, dynamic>>>((ref) => fetchProducts());
+import 'package:e_commerece/shared/new_updates_banner.dart';
 
-class HomeTab extends ConsumerWidget {
+// REAL-TIME: Use StreamProvider for live updates
+final productsStreamProvider = StreamProvider<List<Map<String, dynamic>>>((ref) {
+  return getProductsStream();
+});
+
+// REAL-TIME: Use StreamProvider for live latest products updates
+final latestProductsStreamProvider = StreamProvider<List<Map<String, dynamic>>>((ref) {
+  return getLatestProductsStream(limit: 3);
+});
+
+class HomeTab extends ConsumerStatefulWidget {
   const HomeTab({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    // Watch the providers
-    final asyncProducts = ref.watch(productsProvider);
-    final cartProducts = ref.watch(cartNotifierProvider);
+  ConsumerState<HomeTab> createState() => _HomeTabState();
+}
 
-    return Padding(
-      padding: const EdgeInsets.all(20),
-      child: Column(
+class _HomeTabState extends ConsumerState<HomeTab> {
+  @override
+  void initState() {
+    super.initState();
+    // StreamProvider automatically handles real-time updates
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Watch the providers
+    final asyncProducts = ref.watch(productsStreamProvider);
+    final asyncLatest = ref.watch(latestProductsStreamProvider);
+    final cart = ref.watch(cartNotifierProvider);
+
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color(0xFFE3F2FD), // Light blue
+            Colors.white,
+          ],
+        ),
+      ),
+      child: Stack(
         children: [
-          // Header with just the title
-          Padding(
-            padding: const EdgeInsets.only(bottom: 20),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  "Home",
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(context).colorScheme.primary,
+          // Mountain Background
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 400,
+            child: Opacity(
+              opacity: 0.15,
+              child: ClipPath(
+                clipper: MountainClipper(),
+                child: Container(
+                  decoration: const BoxDecoration(
+                    image: DecorationImage(
+                      image: NetworkImage('https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1200&h=400&fit=crop'),
+                      fit: BoxFit.cover,
+                    ),
                   ),
-                )
-              ],
+                ),
+              ),
             ),
           ),
-          const SizedBox(height: 20),
-
-           Expanded(
-            child: asyncProducts.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (err, stack) {
-                return Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.error_outline, size: 48, color: Colors.red[300]),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Failed to load products',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey[700],
-                        ),
+          
+          // Main Content
+          CustomScrollView(
+            slivers: [
+              // Enhanced SliverAppBar for the banner section
+              SliverAppBar(
+                expandedHeight: 200,
+                floating: false,
+                pinned: true,
+                backgroundColor: Colors.transparent,
+                elevation: 0,
+                flexibleSpace: FlexibleSpaceBar(
+                  background: Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.transparent,
+                          Colors.white.withOpacity(0.1),
+                        ],
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Please check your connection and try again',
-                        style: TextStyle(color: Colors.grey[600]),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                  ),
-                );
-              },
-              data: (products) {
-                if (products.isEmpty) {
-                  return const Center(
-                    child: Text(
-                      'No products available',
-                      style: TextStyle(fontSize: 16),
                     ),
-                  );
-                }
-                
-                return GridView.builder(
-                  itemCount: products.length,
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    mainAxisSpacing: 20,
-                    crossAxisSpacing: 20,
-                    childAspectRatio: 0.75, // Reduced from 0.9 to give more height
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+                      child: _buildEnhancedBannerSection(asyncLatest),
+                    ),
                   ),
-                  itemBuilder: (context, index) {
-                    final productMap = products[index];
-                    final product = Product(
-                      id: productMap['id']?.toString() ?? 'no-id',
-                      title: productMap['title']?.toString() ?? 'No title',
-                      price: productMap['price'] != null
-                          ? int.tryParse(productMap['price'].toString()) ?? 0
-                          : 0,
-                      image: productMap['image']?.toString() ?? 'assets/products/backpack.png',
-                    );
-                    final inCart = cartProducts.any((p) => p.id == product.id);
-
-                    return Container(
-                      padding: const EdgeInsets.all(12), // Reduced padding from 20 to 12
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surface,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Theme.of(context).colorScheme.shadow.withOpacity(0.1),
-                            spreadRadius: 1,
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          // Product Image - Constrained size
-                          Expanded(
-                            flex: 3,
-                            child: Center(
-                              child: Image.asset(
-                                product.image,
-                                height: 60, // Reduced from 80
-                                width: 60,  // Reduced from 80
-                                fit: BoxFit.contain,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 8), // Reduced from 12
-                          
-                          // Product Title - Constrained and ellipsized
-                          Expanded(
-                            flex: 1,
-                            child: Text(
-                              product.title,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14, // Reduced from 16
-                              ),
-                              textAlign: TextAlign.center,
-                              overflow: TextOverflow.ellipsis,
-                              maxLines: 2,
-                            ),
-                          ),
-                          const SizedBox(height: 4), // Reduced from 8
-                          
-                          // Product Price
-                          Expanded(
-                            flex: 1,
-                            child: Text(
-                              '\$${product.price}',
-                              style: TextStyle(
-                                color: Theme.of(context).colorScheme.primary,
-                                fontSize: 14, // Reduced from 16
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 6), // Reduced from 8
-                          
-                          // Add/Remove Button - Constrained height
-                          Expanded(
-                            flex: 1,
-                            child: SizedBox(
-                              width: double.infinity,
-                              child: ElevatedButton(
-                                onPressed: () {
-                                  final cart = ref.read(cartNotifierProvider.notifier);
-                                  if (inCart) {
-                                    cart.removeProduct(product);
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Removed from cart'),
-                                        duration: Duration(seconds: 1),
-                                      ),
-                                    );
-                                  } else {
-                                    cart.addProduct(product);
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Added to cart'),
-                                        duration: Duration(seconds: 1),
-                                      ),
-                                    );
-                                  }
-                                },
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: inCart ? Colors.red : Theme.of(context).colorScheme.primary,
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(vertical: 8), // Reduced padding
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                ),
-                                child: Text(
-                                  inCart ? 'Remove' : 'Add to Cart', // Shortened text
-                                  style: const TextStyle(
-                                    fontSize: 12, // Reduced font size
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
+                ),
+              ),
+              
+              // Enhanced SliverGrid for products
+              _buildEnhancedSliverProductsGrid(asyncProducts, cart.toList()),
+              
+              // Bottom padding
+              const SliverToBoxAdapter(
+                child: SizedBox(height: 40),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
+
+  Widget _buildEnhancedBannerSection(AsyncValue<List<Map<String, dynamic>>> asyncLatest) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 400),
+      child: asyncLatest.when(
+        loading: () => _buildEnhancedBannerLoading(),
+        error: (e, st) {
+          print('Banner error: $e');
+          return _buildEnhancedBannerFallback();
+        },
+        data: (latest) {
+          return _buildEnhancedBannerWithData(latest);
+        },
+      ),
+    );
+  }
+
+  Widget _buildEnhancedBannerLoading() {
+    return Container(
+      key: const ValueKey('banner-loading'),
+      height: 160,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xFF2196F3).withOpacity(0.1),
+            const Color(0xFF64B5F6).withOpacity(0.05),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: const Color(0xFF2196F3).withOpacity(0.2),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            spreadRadius: 0,
+            blurRadius: 20,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(
+                strokeWidth: 3,
+                color: const Color(0xFF2196F3),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Loading latest updates...',
+              style: TextStyle(
+                color: const Color(0xFF2196F3),
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEnhancedBannerFallback() {
+    return Container(
+      key: const ValueKey('banner-fallback'),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            spreadRadius: 0,
+            blurRadius: 20,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: NewUpdatesBanner(
+          height: 160,
+          items: const [
+            {'text': '🎉 Welcome to our store!', 'image': 'assets/products/backpack.png'},
+            {'text': '✨ Discover amazing products', 'image': 'assets/products/guitar.png'},
+            {'text': '🚀 New items added regularly', 'image': 'assets/products/drum.png'},
+          ],
+          onTap: (index, text) {
+            // Handle fallback banner taps
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEnhancedBannerWithData(List<Map<String, dynamic>> latest) {
+    final items = <Map<String, dynamic>>[];
+    
+    // Build banner items from latest products
+    for (final product in latest.take(3)) { // Take up to 3 latest
+      final title = (product['title'] ?? 'New Product').toString();
+      final image = (product['image'] ?? '').toString();
+      
+      items.add({
+        'text': ' New Arrival: $title',
+        'image': image, 
+        'productId': product['id']?.toString(),
+      });
+    }
+
+    // Add fallback if no products
+    if (items.isEmpty) {
+      items.addAll([
+        {'text': '🎉 Welcome to our store!', 'image': 'assets/products/drum.png'},
+        {'text': '✨ Discover amazing products', 'image': 'assets/products/guitar.png'},
+        {'text': '🚀 New items added regularly', 'image': 'assets/products/jeans.png'},
+      ]);
+    }
+    
+    // Always ensure we have fallback images for banner items
+    for (int i = 0; i < items.length; i++) {
+      if (items[i]['image'] == null || (items[i]['image'] as String).isEmpty) {
+        items[i]['image'] = 'assets/products/backpack.png'; // Fallback image
+      }
+    }
+
+    return Container(
+      key: const ValueKey('banner-data'),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.15),
+            spreadRadius: 0,
+            blurRadius: 25,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: NewUpdatesBanner(
+          height: 160,
+          items: items,
+          onTap: (index, text) {
+            // Navigate to specific product if available
+            if (index < items.length && items[index]['productId'] != null) {
+              final productId = items[index]['productId'] as String;
+              _navigateToProduct(productId, latest);
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEnhancedSliverProductsGrid(AsyncValue<List<Map<String, dynamic>>> asyncProducts, List<Product> cart) {
+    return asyncProducts.when(
+      loading: () => _buildEnhancedSliverProductsLoading(),
+      error: (err, stack) {
+        print('Products error: $err');
+        return _buildEnhancedSliverProductsError();
+      },
+      data: (products) {
+        return _buildEnhancedSliverProductsSuccess(products, cart);
+      },
+    );
+  }
+
+  Widget _buildEnhancedSliverProductsLoading() {
+    return SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      sliver: SliverGrid(
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2, // Fixed 2 columns
+          mainAxisSpacing: 16,
+          crossAxisSpacing: 16,
+          childAspectRatio: 0.75,
+        ),
+        delegate: SliverChildBuilderDelegate(
+          (context, index) {
+            return Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    spreadRadius: 0,
+                    blurRadius: 10,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: Container(
+                      margin: const EdgeInsets.all(15),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Center(
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Color(0xFF2196F3),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    flex: 2,
+                    child: Padding(
+                      padding: const EdgeInsets.all(19),
+                      child: Column(
+                        children: [
+                          Container(
+                            height: 14,
+                            width: double.infinity,
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade200,
+                              borderRadius: BorderRadius.circular(7),
+                            ),
+                          ),
+                          const Spacer(),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Container(
+                                height: 16,
+                                width: 50,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF2196F3).withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                              ),
+                              Container(
+                                height: 28,
+                                width: 60,
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade200,
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+          childCount: 6,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEnhancedSliverProductsError() {
+    return SliverToBoxAdapter(
+      child: Container(
+        margin: const EdgeInsets.all(24),
+        height: 300,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.red.withOpacity(0.1),
+              spreadRadius: 0,
+              blurRadius: 20,
+              offset: const Offset(0, 5),
+            ),
+          ],
+        ),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.error_outline, size: 64, color: Colors.red[300]),
+              const SizedBox(height: 20),
+              Text(
+                'Failed to load products',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey[800],
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Please check your connection and try again',
+                style: TextStyle(color: Colors.grey[600], fontSize: 16),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton.icon(
+                onPressed: () {
+                  ref.invalidate(productsStreamProvider);
+                  ref.invalidate(latestProductsStreamProvider);
+                },
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF2196F3),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEnhancedSliverProductsSuccess(List<Map<String, dynamic>> products, List<Product> cart) {
+    // Your existing filtering logic
+    List<Map<String, dynamic>> cleaned = products.where((productMap) {
+      final String rawTitle = (productMap['title'] ?? '').toString().trim();
+      final String title = rawTitle.toLowerCase();
+      final String description = (productMap['description'] ?? '').toString().trim();
+      final String sellerName = (productMap['sellerName'] ?? '').toString().trim();
+      final bool titleMissingOrDefault = rawTitle.isEmpty || title == 'no title';
+      final bool noInfo = description.isEmpty && sellerName.isEmpty;
+      final bool isPlaceholder = titleMissingOrDefault && noInfo;
+      return !isPlaceholder;
+    }).toList();
+
+    if (cleaned.isEmpty) {
+      return SliverToBoxAdapter(
+        child: Container(
+          margin: const EdgeInsets.all(16),
+          height: 200,
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.inventory_2_outlined, size: 48, color: Colors.grey[400]),
+                const SizedBox(height: 16),
+                const Text(
+                  'No products available yet',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Check back later for new arrivals!',
+                  style: TextStyle(color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      sliver: SliverGrid(
+        key: ValueKey('sleek-products-grid-${cleaned.length}'),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2, // Fixed 2 columns
+          mainAxisSpacing: 16,
+          crossAxisSpacing: 16,
+          childAspectRatio: 0.75,
+        ),
+        delegate: SliverChildBuilderDelegate(
+          (context, index) {
+            final productMap = cleaned[index];
+            final product = Product(
+              id: productMap['id']?.toString() ?? 'no-id-$index',
+              title: productMap['title']?.toString() ?? 'No title',
+              price: productMap['price'] != null
+                  ? int.tryParse(productMap['price'].toString()) ?? 0
+                  : 0,
+              image: productMap['image']?.toString() ?? 'assets/products/backpack.png',
+              sellerName: productMap['sellerName']?.toString(),
+              description: productMap['description']?.toString(),
+            );
+            final inCart = cart.any((p) => p.id == product.id);
+
+            return SleekProductCard(
+              key: ValueKey('sleek-product-${product.id}'),
+              product: product,
+              inCart: inCart,
+              onAddToCart: () {
+                final cartNotifier = ref.read(cartNotifierProvider.notifier);
+                if (inCart) {
+                  cartNotifier.removeProduct(product);
+                  ref.read(cartQuantitiesProvider.notifier).remove(product.id);
+                } else {
+                  cartNotifier.addProduct(product);
+                  ref.read(cartQuantitiesProvider.notifier).setQuantity(product.id, 1);
+                }
+              },
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => ItemScreen(product: product),
+                  ),
+                );
+              },
+            );
+          },
+          childCount: cleaned.length,
+        ),
+      ),
+    );
+  }
+
+  int _getCrossAxisCount(BuildContext context) {
+    final width = MediaQuery.of(context).size.width;
+    if (width > 1200) return 3;
+    if (width > 600) return 2;
+    return 1;
+  }
+
+  void _navigateToProduct(String productId, List<Map<String, dynamic>> products) {
+    final productMap = products.firstWhere(
+      (p) => p['id']?.toString() == productId,
+      orElse: () => <String, dynamic>{},
+    );
+
+    if (productMap.isNotEmpty) {
+      final product = Product(
+        id: productMap['id']?.toString() ?? productId,
+        title: productMap['title']?.toString() ?? 'Product',
+        price: productMap['price'] != null
+            ? int.tryParse(productMap['price'].toString()) ?? 0
+            : 0,
+        image: productMap['image']?.toString() ?? 'assets/products/backpack.png',
+        sellerName: productMap['sellerName']?.toString(),
+        description: productMap['description']?.toString(),
+      );
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ItemScreen(product: product),
+        ),
+      );
+    }
+  }
+}
+
+// Sleek Product Card Widget - Minimal and Clean
+class SleekProductCard extends StatefulWidget {
+  final Product product;
+  final bool inCart;
+  final VoidCallback onAddToCart;
+  final VoidCallback onTap;
+
+  const SleekProductCard({
+    super.key,
+    required this.product,
+    required this.inCart,
+    required this.onAddToCart,
+    required this.onTap,
+  });
+
+  @override
+  State<SleekProductCard> createState() => _SleekProductCardState();
+}
+
+class _SleekProductCardState extends State<SleekProductCard> {
+  bool _isPressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _isPressed = true),
+      onTapUp: (_) {
+        setState(() => _isPressed = false);
+        widget.onTap();
+      },
+      onTapCancel: () => setState(() => _isPressed = false),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        transform: Matrix4.identity()..scale(_isPressed ? 0.98 : 1.0),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              spreadRadius: 0,
+              blurRadius: 10,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+               // Image Section
+             Expanded(
+               flex: 3,
+               child: ClipRRect(
+                 borderRadius: const BorderRadius.only(
+                   topLeft: Radius.circular(16),
+                   topRight: Radius.circular(16),
+                 ),
+                 child: Container(
+               
+                   width: double.infinity,
+                   color: Colors.grey[50],
+                 child: Hero(
+                   tag: 'sleek-product-${widget.product.id}',
+                   child: _SleekProductImage(
+                    image: widget.product.image , ),
+
+                 ),
+               ),
+               ),
+             ),
+            
+            // Content Section
+            Expanded(
+              flex: 2,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Product Title
+                    Text(
+                      widget.product.title,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF1F2937),
+                        height: 1.2,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    
+                    const Spacer(),
+                    
+                    // Price and Button Row
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                                                 // Price
+                         Text(
+                           '\$${widget.product.price}',
+                           style: const TextStyle(
+                             fontSize: 16,
+                             fontWeight: FontWeight.bold,
+                             color: Color(0xFF2196F3),
+                           ),
+                         ),
+                        
+                                                 // Add Button
+                         GestureDetector(
+                           onTap: widget.onAddToCart,
+                           child: AnimatedContainer(
+                             duration: const Duration(milliseconds: 200),
+                             padding: const EdgeInsets.symmetric(
+                               horizontal: 8, 
+                               vertical: 4,
+                             ),
+                             decoration: BoxDecoration(
+                               color: widget.inCart 
+                                   ? Colors.orange.shade500
+                                   : const Color(0xFF2196F3),
+                               borderRadius: BorderRadius.circular(8),
+                             ),
+                             child: Icon(
+                               widget.inCart 
+                                   ? Icons.remove_shopping_cart
+                                   : Icons.add_shopping_cart,
+                               size: 16,
+                               color: Colors.white,
+                             ),
+                           ),
+                         ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SleekProductImage extends StatelessWidget {
+  const _SleekProductImage({required this.image});
+
+  final String image;
+
+  bool get _isNetwork => image.startsWith('http://') || image.startsWith('https://');
+  bool get _isDataUrl => image.startsWith('data:image/');
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isDataUrl) {
+      try {
+        final uri = Uri.parse(image);
+        final data = uri.data;
+        if (data != null) {
+          return Image.memory(
+            data.contentAsBytes(), 
+            fit: BoxFit.cover,
+            width: double.infinity,
+            height: double.infinity,
+          );
+        }
+      } catch (_) {}
+      return Image.asset(
+        'assets/products/backpack.png', 
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+      );
+    }
+    
+    if (_isNetwork) {
+      return CachedNetworkImage(
+        imageUrl: image,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+        placeholder: (context, url) => Container(
+          color: Colors.grey[100],
+          child: const Center(
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+        errorWidget: (context, url, error) => Container(
+          color: Colors.grey[100],
+          child: Icon(
+            Icons.image_not_supported,
+            size: 32,
+            color: Colors.grey[400],
+          ),
+        ),
+      );
+    }
+    
+    return Image.asset(
+      image, 
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+    );
+  }
+}
+
+class MountainClipper extends CustomClipper<Path> {
+  @override
+  Path getClip(Size size) {
+    final path = Path();
+    path.lineTo(0, 0);
+    path.lineTo(size.width, 0);
+    path.lineTo(size.width, size.height * 0.7);
+    path.lineTo(0, size.height);
+    path.close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(CustomClipper<Path> oldClipper) => false;
 }

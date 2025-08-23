@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:e_commerece/models/app_user.dart';
+ 
 import 'package:e_commerece/routes/app_routes.dart';
+import 'package:e_commerece/shared/green_black_animated_bg.dart';
 
 class RegisterScreen extends ConsumerStatefulWidget {
   const RegisterScreen({super.key});
@@ -18,6 +19,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _addressController = TextEditingController();
+  final _phoneController = TextEditingController();
 
   final _auth = FirebaseAuth.instance;
   final _firestore = FirebaseFirestore.instance;
@@ -44,20 +46,12 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
         'name': _nameController.text.trim(),
         'email': _emailController.text.trim(),
         'address': _addressController.text.trim(),
+        'phone': _phoneController.text.trim(),
         'createdAt': FieldValue.serverTimestamp(),
         'purchaseHistory': [], // Initialize empty purchase history
         'totalPurchases': 0,  // Initialize total purchases count
         'lastPurchaseDate': null, // No purchases yet
       });
-
-
-      // Optional: local model (if needed in app state)
-      final user = AppUser(
-        uid: uid,
-        name: _nameController.text.trim(),
-        email: _emailController.text.trim(),
-        address: _addressController.text.trim(),
-      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -95,106 +89,138 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   }) {
     return InputDecoration(
       labelText: label,
-      labelStyle: TextStyle(color: Theme.of(context).colorScheme.primary),
+      labelStyle: const TextStyle(color: Colors.white70),
       hintText: hint,
-      prefixIcon: Icon(icon, color: Theme.of(context).colorScheme.primary),
+      prefixIcon: Icon(icon, color: Colors.white70),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: Theme.of(context).colorScheme.outline),
+        borderSide: BorderSide(color: Colors.white.withOpacity(0.25)),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: Theme.of(context).colorScheme.outline),
+        borderSide: BorderSide(color: Colors.white.withOpacity(0.25)),
       ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: Theme.of(context).colorScheme.primary, width: 2),
+      focusedBorder: const OutlineInputBorder(
+        borderRadius: BorderRadius.all(Radius.circular(16)),
+        borderSide: BorderSide(color: Colors.white, width: 2),
       ),
       filled: true,
-      fillColor: Theme.of(context).colorScheme.surface,
+      fillColor: Colors.white.withOpacity(0.06),
+      hintStyle: const TextStyle(color: Colors.white54),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      extendBody: true,
+      backgroundColor: const Color.fromARGB(255, 98, 118, 173),
       appBar: AppBar(
-        backgroundColor: Theme.of(context).colorScheme.primary,
-        title: const Text('Register'),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          onPressed: () {
+            AppRoutes.navigateToLogin(context);
+          }, 
+          icon: Icon(Icons.arrow_back_ios_new_outlined, color: Color.fromARGB(255, 229, 229, 229)),
+        ),
+        title: const Text('Register', style: TextStyle(color: Color.fromARGB(255, 231, 231, 231))),
         centerTitle: true,
+        
+        iconTheme: const IconThemeData(color: Color.fromARGB(255, 0, 0, 0)),
+        
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            children: [
-              TextFormField(
-                controller: _nameController,
-                decoration: _inputDecoration(
-                  label: 'Name',
-                  icon: Icons.person_outline,
-                  hint: 'Enter your name',
-                ),
-                validator: (v) => v!.isEmpty ? 'Enter your name' : null,
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _emailController,
-                decoration: _inputDecoration(
-                  label: 'Email',
-                  icon: Icons.email_outlined,
-                  hint: 'Enter your email',
-                ),
-                keyboardType: TextInputType.emailAddress,
-                validator: (v) {
-                  if (v!.isEmpty) return 'Enter your email';
-                  if (!RegExp(r'^[^@]+@[^@]+\.[^@]+').hasMatch(v)) {
-                    return 'Please enter a valid email address';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _passwordController,
-                decoration: _inputDecoration(
-                  label: 'Password',
-                  icon: Icons.lock_outline,
-                  hint: 'Enter your password',
-                ),
-                obscureText: true,
-                validator: (v) => v!.length < 6 ? 'Password must be 6+ chars' : null,
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _addressController,
-                decoration: _inputDecoration(
-                  label: 'Address',
-                  icon: Icons.home_outlined,
-                  hint: 'Enter your address',
-                ),
-                validator: (v) => v!.isEmpty ? 'Enter your address' : null,
-              ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    backgroundColor: Theme.of(context).colorScheme.primary,
-                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
+      body: GreenBlackAnimatedBg(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              children: [
+                TextFormField(
+                  controller: _nameController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _inputDecoration(
+                    label: 'Name',
+                    icon: Icons.person_outline,
+                    hint: 'Enter your name',
                   ),
-                  onPressed: _isLoading ? null : _registerUser,
-                  child: _isLoading
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Text('Register'),
+                  validator: (v) => v!.isEmpty ? 'Enter your name' : null,
                 ),
-              ),
-            ],
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _emailController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _inputDecoration(
+                    label: 'Email',
+                    icon: Icons.email_outlined,
+                    hint: 'Enter your email',
+                  ),
+                  keyboardType: TextInputType.emailAddress,
+                  validator: (v) {
+                    if (v!.isEmpty) return 'Enter your email';
+                    if (!RegExp(r'^[^@]+@[^@]+\.[^@]+').hasMatch(v)) {
+                      return 'Please enter a valid email address';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _passwordController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _inputDecoration(
+                    label: 'Password',
+                    icon: Icons.lock_outline,
+                    hint: 'Enter your password',
+                  ),
+                  obscureText: true,
+                  validator: (v) => v!.length < 6 ? 'Password must be 6+ chars' : null,
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _addressController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _inputDecoration(
+                    label: 'Address',
+                    icon: Icons.home_outlined,
+                    hint: 'Enter your address',
+                  ),
+                  validator: (v) => v!.isEmpty ? 'Enter your address' : null,
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _phoneController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _inputDecoration(
+                    label: 'Phone Number',
+                    icon: Icons.phone_outlined,
+                    hint: 'Enter your phone number',
+                  ),
+                  keyboardType: TextInputType.phone,
+                  validator: (v) => v!.isEmpty ? 'Enter your phone number' : null,
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      backgroundColor: Colors.white.withOpacity(0.2),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    onPressed: _isLoading ? null : _registerUser,
+                    child: _isLoading
+                        ? const CircularProgressIndicator(color: Colors.white)
+                        : const Text('Register'),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -207,6 +233,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     _emailController.dispose();
     _passwordController.dispose();
     _addressController.dispose();
+    _phoneController.dispose();
     super.dispose();
   }
 }

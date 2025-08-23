@@ -19,7 +19,10 @@ class CartIcon extends ConsumerWidget {
               MaterialPageRoute(builder: (context) => const CartScreen()),
             );
           },
-          icon: const Icon(Icons.shopping_bag_outlined),
+          icon: Icon(
+            Icons.shopping_bag_outlined,
+            color: Theme.of(context).colorScheme.primary,
+          ),
         ),
         if (numberOfItemsInCart > 0)
           Positioned(

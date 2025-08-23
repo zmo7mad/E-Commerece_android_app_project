@@ -5,7 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:e_commerece/models/product.dart';
 import 'package:e_commerece/providers/checkout_provider.dart';
 import 'package:e_commerece/providers/cart_provider.dart';
-import 'package:e_commerece/routes/app_routes.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+ 
 
 class CheckoutScreen extends ConsumerStatefulWidget {
   final List<Product> cartProducts;
@@ -70,7 +71,12 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
         return;
       }
 
-      // Create order data
+      // Build quantities from provider so amounts carry over
+      final quantities = ref.read(cartQuantitiesProvider);
+      final Map<String, int> productQuantities = {
+        for (final p in widget.cartProducts) p.id: (quantities[p.id] ?? 1),
+      };
+
       final orderData = {
         'userId': user.uid,
         'userEmail': user.email,
@@ -82,20 +88,48 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
           'title': p.title,
           'price': p.price,
           'image': p.image,
+          'quantity': productQuantities[p.id] ?? 1,
         }).toList(),
-        'total': widget.total,
+        'total': widget.cartProducts.fold<int>(0, (sum, p) => sum + p.price * (productQuantities[p.id] ?? 1)),
         'orderDate': FieldValue.serverTimestamp(),
         'status': 'pending',
         'orderId': 'ORD-${DateTime.now().millisecondsSinceEpoch}',
       };
 
       // Save order to Firestore
-      await FirebaseFirestore.instance
+      final orderRef = await FirebaseFirestore.instance
           .collection('Orders')
           .add(orderData);
 
-      // Update user's purchase history with the new product IDs
-      await _updateUserPurchaseHistory(user.uid, widget.cartProducts);
+      // Increment product-level purchase counters (only for existing products)
+      final batch = FirebaseFirestore.instance.batch();
+      for (final entry in productQuantities.entries) {
+        try {
+          final docRef = FirebaseFirestore.instance.collection('Products').doc(entry.key);
+          // Check if product exists before updating
+          final docSnapshot = await docRef.get();
+          if (docSnapshot.exists) {
+            batch.update(docRef, {
+              'timesBought': FieldValue.increment(entry.value),
+            });
+          }
+          // If product doesn't exist, skip updating it (don't create new documents)
+        } catch (e) {
+          print('Warning: Could not update timesBought for product ${entry.key}: $e');
+          // Continue with other products even if one fails
+        }
+      }
+      // Link order to user
+      final userOrdersRef = FirebaseFirestore.instance.collection('Users').doc(user.uid).collection('Orders').doc(orderRef.id);
+      batch.set(userOrdersRef, {
+        'orderId': orderRef.id,
+        'createdAt': FieldValue.serverTimestamp(),
+        'total': widget.cartProducts.fold<int>(0, (sum, p) => sum + p.price * (productQuantities[p.id] ?? 1)),
+      });
+      await batch.commit();
+
+      // Update user's purchase history with quantities and product IDs
+      await _updateUserPurchaseHistory(user.uid, widget.cartProducts, productQuantities);
 
       if (mounted) {
         // Complete checkout successfully
@@ -135,7 +169,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     }
   }
 
-  Future<void> _updateUserPurchaseHistory(String userId, List<Product> products) async {
+  Future<void> _updateUserPurchaseHistory(String userId, List<Product> products, Map<String, int> quantities) async {
     try {
       final userDocRef = FirebaseFirestore.instance.collection('Users').doc(userId);
       
@@ -144,28 +178,35 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
       
       if (userDoc.exists) {
         final userData = userDoc.data() as Map<String, dynamic>;
-        List<String> currentPurchaseHistory = List<String>.from(userData['purchaseHistory'] ?? []);
-        
-        // Add new product IDs to purchase history (avoid duplicates)
-        for (Product product in products) {
-          if (!currentPurchaseHistory.contains(product.id)) {
-            currentPurchaseHistory.add(product.id);
-          }
+        // Map of productId -> total quantity ever bought
+        final Map<String, int> productTotals = Map<String, int>.from(userData['productsBought'] ?? {});
+        // List of product IDs bought at least once
+        final Set<String> purchaseIds = Set<String>.from(userData['purchaseHistory'] ?? <String>[]);
+
+        for (final Product product in products) {
+          final int qty = quantities[product.id] ?? 1;
+          productTotals[product.id] = (productTotals[product.id] ?? 0) + qty;
+          purchaseIds.add(product.id);
         }
-        
-        // Update user document with new purchase history
+
         await userDocRef.update({
-          'purchaseHistory': currentPurchaseHistory,
+          'productsBought': productTotals,
+          'purchaseHistory': purchaseIds.toList(),
           'lastPurchaseDate': FieldValue.serverTimestamp(),
-          'totalPurchases': currentPurchaseHistory.length,
+          'totalPurchases': purchaseIds.length,
         });
         
         print('User purchase history updated successfully');
       } else {
+        final Map<String, int> initialTotals = {};
+        for (final Product p in products) {
+          initialTotals[p.id] = (initialTotals[p.id] ?? 0) + (quantities[p.id] ?? 1);
+        }
         await userDocRef.set({
+          'productsBought': initialTotals,
           'purchaseHistory': products.map((p) => p.id).toList(),
           'lastPurchaseDate': FieldValue.serverTimestamp(),
-          'totalPurchases': products.length,
+          'totalPurchases': initialTotals.length,
         }, SetOptions(merge: true));
         
         print('User document created with purchase history');
@@ -178,12 +219,41 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final quantitiesWatch = ref.watch(cartQuantitiesProvider);
+    final displayTotal = widget.cartProducts.fold<int>(
+      0,
+      (sum, p) => sum + p.price * (quantitiesWatch[p.id] ?? 1),
+    );
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: Theme.of(context).colorScheme.primary,
-        title: const Text('Checkout'),
+           flexibleSpace: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Theme.of(context).colorScheme.primary,
+                      Theme.of(context).colorScheme.primary,
+                      Colors.white,
+                    ],
+                    stops: const [0, 0.2,1],
+                  ),
+                ),
+              ),
+        backgroundColor: Colors.white,
+        title:  Text('Checkout',
+        style: TextStyle(
+          color: Theme.of(context).colorScheme.primary,
+        ),
+        ),
         centerTitle: true,
         elevation: 0,
+        leading: IconButton(
+          onPressed: () {
+            Navigator.pop(context);
+          },
+          icon: Icon(Icons.arrow_back_ios_new, color: Theme.of(context).colorScheme.primary,),
+        ),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
@@ -218,11 +288,10 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                           children: [
                             ClipRRect(
                               borderRadius: BorderRadius.circular(8),
-                              child: Image.asset(
-                                product.image,
+                              child: Container(
                                 width: 50,
                                 height: 50,
-                                fit: BoxFit.cover,
+                                child: _ProductImage(image: product.image),
                               ),
                             ),
                             const SizedBox(width: 16),
@@ -237,15 +306,36 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                                       fontWeight: FontWeight.w500,
                                     ),
                                   ),
-                                  Text(
-                                    '\$${product.price}',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: Theme.of(context).colorScheme.primary,
-                                      fontWeight: FontWeight.w600,
-                                    ),
+                                  const SizedBox(height: 4),
+                                  Row(
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.grey[200],
+                                          borderRadius: BorderRadius.circular(10),
+                                        ),
+                                        child: Text('x${(ref.watch(cartQuantitiesProvider)[product.id] ?? 1)}', style: const TextStyle(fontSize: 12)),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        ' \$${product.price}',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey[700],
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ],
+                              ),
+                            ),
+                            Text(
+                              '\$${product.price * (ref.watch(cartQuantitiesProvider)[product.id] ?? 1)}',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Theme.of(context).colorScheme.primary,
+                                fontWeight: FontWeight.w700,
                               ),
                             ),
                           ],
@@ -263,7 +353,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                             ),
                           ),
                           Text(
-                            '\$${widget.total}',
+                            '\$' + displayTotal.toString(),
                             style: TextStyle(
                               fontSize: 24,
                               fontWeight: FontWeight.bold,
@@ -339,6 +429,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
               // Phone Field
               TextFormField(
                 controller: _phoneController,
+                keyboardType: TextInputType.phone,
                 decoration: InputDecoration(
                   labelText: 'Phone Number',
                   hintText: 'Enter your phone number',
@@ -413,6 +504,8 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                         ),
                 ),
               ),
+              const SizedBox(height: 16),
+
             ],
           ),
         ),
@@ -427,5 +520,62 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     _phoneController.dispose();
     _addressController.dispose();
     super.dispose();
+  }
+}
+
+class _ProductImage extends StatelessWidget {
+  const _ProductImage({required this.image});
+
+  final String image;
+
+  bool get _isNetwork => image.startsWith('http://') || image.startsWith('https://');
+  bool get _isDataUrl => image.startsWith('data:image/');
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isDataUrl) {
+      // Data URL: decode and render
+      try {
+        final uri = Uri.parse(image);
+        final data = uri.data; // data URI
+        if (data != null) {
+          return Image.memory(
+            data.contentAsBytes(), 
+            fit: BoxFit.cover,
+            width: 50,
+            height: 50,
+          );
+        }
+      } catch (_) {}
+      return Image.asset(
+        'assets/products/backpack.png', 
+        fit: BoxFit.cover,
+        width: 50,
+        height: 50,
+      );
+    }
+    if (_isNetwork) {
+      return CachedNetworkImage(
+        imageUrl: image,
+        fit: BoxFit.cover,
+        width: 50,
+        height: 50,
+        placeholder: (context, url) => const Center(
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        errorWidget: (context, url, error) => Image.asset(
+          'assets/products/backpack.png', 
+          fit: BoxFit.cover,
+          width: 50,
+          height: 50,
+        ),
+      );
+    }
+    return Image.asset(
+      image, 
+      fit: BoxFit.cover,
+      width: 50,
+      height: 50,
+    );
   }
 }
