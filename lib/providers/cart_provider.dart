@@ -2,6 +2,7 @@ import 'package:e_commerece/models/product.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:e_commerece/shared/firebase.dart';
+import 'package:e_commerece/providers/stock_provider.dart';
 
 part 'cart_provider.g.dart';
 
@@ -32,8 +33,14 @@ class CartNotifier extends _$CartNotifier {
 
   void addProduct(Product product) {
     if (!state.any((p) => p.id == product.id)) {
-      state = {...state, product};
-      _saveCart();
+      // Check stock availability before adding to cart
+      final stockNotifier = ref.read(stockProvider.notifier);
+      final currentStock = stockNotifier.getStock(product.id);
+      
+      if (currentStock > 0) {
+        state = {...state, product};
+        _saveCart();
+      }
     }
   }
 
@@ -90,9 +97,16 @@ class CartQuantitiesNotifier extends StateNotifier<Map<String, int>> {
       newState.remove(productId);
       state = newState;
     } else {
+      // Check stock availability before setting quantity
+      final stockNotifier = ref.read(stockProvider.notifier);
+      final currentStock = stockNotifier.getStock(productId);
+      
+      // Don't allow quantity to exceed available stock
+      final adjustedQuantity = quantity > currentStock ? currentStock : quantity;
+      
       state = {
         ...state,
-        productId: quantity,
+        productId: adjustedQuantity,
       };
     }
     _saveQuantities();

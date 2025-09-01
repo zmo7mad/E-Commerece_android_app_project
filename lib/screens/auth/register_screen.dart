@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
  
 import 'package:e_commerece/routes/app_routes.dart';
 import 'package:e_commerece/shared/green_black_animated_bg.dart';
+import 'package:e_commerece/providers/user_role_provider.dart';
 
 class RegisterScreen extends ConsumerStatefulWidget {
   const RegisterScreen({super.key});
@@ -25,6 +26,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final _firestore = FirebaseFirestore.instance;
 
   bool _isLoading = false;
+  String _selectedUserRole = 'user'; // Default to user
+
+  final List<String> _userRoles = ['user', 'seller'];
 
   Future<void> _registerUser() async {
     if (!_formKey.currentState!.validate()) return;
@@ -47,6 +51,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
         'email': _emailController.text.trim(),
         'address': _addressController.text.trim(),
         'phone': _phoneController.text.trim(),
+        'userRole': _selectedUserRole, // Save the selected user role
         'createdAt': FieldValue.serverTimestamp(),
         'purchaseHistory': [], // Initialize empty purchase history
         'totalPurchases': 0,  // Initialize total purchases count
@@ -55,9 +60,18 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('User registered successfully!')),
+          SnackBar(
+            content: Text('Welcome! You are now registered as $_selectedUserRole.'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
         );
-        AppRoutes.navigateToLogin(context);
+        
+        // Refresh the user role provider to ensure it picks up the new role
+        ref.invalidate(autoRefreshUserRoleProvider);
+        
+        // Route directly to the app instead of login screen
+        AppRoutes.navigateToHome(context);
       }
     } on FirebaseAuthException catch (e) {
       String msg = 'Registration failed';
@@ -199,6 +213,92 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                   ),
                   keyboardType: TextInputType.phone,
                   validator: (v) => v!.isEmpty ? 'Enter your phone number' : null,
+                ),
+                const SizedBox(height: 16),
+                // User Role Dropdown
+                Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.white.withOpacity(0.25)),
+                    color: Colors.white.withOpacity(0.06),
+                  ),
+                  child: DropdownButtonFormField<String>(
+                    value: _selectedUserRole,
+                    style: const TextStyle(color: Colors.white),
+                    dropdownColor: const Color.fromARGB(255, 98, 118, 173),
+                    decoration: InputDecoration(
+                      labelText: 'User Role *',
+                      labelStyle: const TextStyle(color: Colors.white70),
+                      prefixIcon: const Icon(Icons.work_outline, color: Colors.white70),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        borderSide: BorderSide(color: Colors.white.withOpacity(0.25)),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        borderSide: BorderSide(color: Colors.white.withOpacity(0.25)),
+                      ),
+                      focusedBorder: const OutlineInputBorder(
+                        borderRadius: BorderRadius.all(Radius.circular(16)),
+                        borderSide: BorderSide(color: Colors.white, width: 2),
+                      ),
+                      filled: true,
+                      fillColor: Colors.transparent,
+                    ),
+                    items: _userRoles.map((String role) {
+                      return DropdownMenuItem<String>(
+                        value: role,
+                        child: Text(
+                          role == 'seller' ? 'Seller' : 'User',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (String? newValue) {
+                      setState(() {
+                        _selectedUserRole = newValue!;
+                      });
+                    },
+                    validator: (value) {
+                      if (value == null || value.isEmpty) {
+                        return 'Please select a user role';
+                      }
+                      return null;
+                    },
+                  ),
+                ),
+                const SizedBox(height: 24),
+                // Role description
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.white.withOpacity(0.2)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Role Information:',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _selectedUserRole == 'seller' 
+                          ? '• Can create and manage products\n• Can edit product information and images\n• Has access to stock management\n• Can view all orders and manage inventory'
+                          : '• Can browse and purchase products\n• Can view favorites and order history\n• Cannot edit product information\n• Limited to shopping features only',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.9),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 24),
                 SizedBox(

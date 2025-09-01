@@ -2,22 +2,15 @@ import 'package:e_commerece/models/product.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:e_commerece/providers/cart_provider.dart';
-import 'package:e_commerece/shared/firebase.dart';
-import 'package:animations/animations.dart';
+import 'package:e_commerece/providers/products_stream_provider.dart';
 import 'package:e_commerece/screens/product/item_screen.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-
+import 'package:e_commerece/shared/widgets/product_image.dart';
+import 'package:e_commerece/shared/widgets/text_utils.dart';
+import 'package:e_commerece/shared/widgets/stock_utils.dart';
 import 'package:e_commerece/shared/new_updates_banner.dart';
-
-// REAL-TIME: Use StreamProvider for live updates
-final productsStreamProvider = StreamProvider<List<Map<String, dynamic>>>((ref) {
-  return getProductsStream();
-});
-
-// REAL-TIME: Use StreamProvider for live latest products updates
-final latestProductsStreamProvider = StreamProvider<List<Map<String, dynamic>>>((ref) {
-  return getLatestProductsStream(limit: 3);
-});
+import 'package:e_commerece/providers/deletion_provider.dart';
+import 'package:e_commerece/providers/stock_provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class HomeTab extends ConsumerStatefulWidget {
   const HomeTab({super.key});
@@ -31,6 +24,19 @@ class _HomeTabState extends ConsumerState<HomeTab> {
   void initState() {
     super.initState();
     // StreamProvider automatically handles real-time updates
+    // Initialize stock provider when products are loaded
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializeStockProvider();
+    });
+  }
+
+  void _initializeStockProvider() {
+    final productsAsync = ref.read(productsStreamProvider);
+    productsAsync.whenData((products) {
+      if (products.isNotEmpty) {
+        StockUtils.initializeStockProvider(ref, products);
+      }
+    });
   }
 
   @override
@@ -39,6 +45,14 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     final asyncProducts = ref.watch(productsStreamProvider);
     final asyncLatest = ref.watch(latestProductsStreamProvider);
     final cart = ref.watch(cartNotifierProvider);
+    final stock = ref.watch(stockProvider); // Watch stock provider for real-time updates
+    
+    // Sync stock provider when products are loaded
+    asyncProducts.whenData((products) {
+      if (products.isNotEmpty) {
+        StockUtils.initializeStockProvider(ref, products);
+      }
+    });
 
     return Container(
       decoration: const BoxDecoration(
@@ -224,8 +238,19 @@ class _HomeTabState extends ConsumerState<HomeTab> {
   Widget _buildEnhancedBannerWithData(List<Map<String, dynamic>> latest) {
     final items = <Map<String, dynamic>>[];
     
-    // Build banner items from latest products
-    for (final product in latest.take(3)) { // Take up to 3 latest
+    // Sort products by creation time (newest first) and take the latest 3
+    final sortedProducts = List<Map<String, dynamic>>.from(latest);
+    sortedProducts.sort((a, b) {
+      final aTime = a['createdAt'] as Timestamp?;
+      final bTime = b['createdAt'] as Timestamp?;
+      if (aTime == null && bTime == null) return 0;
+      if (aTime == null) return 1;
+      if (bTime == null) return -1;
+      return bTime.compareTo(aTime); // Newest first
+    });
+    
+    // Build banner items from latest products (left to right)
+    for (final product in sortedProducts.take(3)) {
       final title = (product['title'] ?? 'New Product').toString();
       final image = (product['image'] ?? '').toString();
       
@@ -303,7 +328,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
           crossAxisCount: 2, // Fixed 2 columns
           mainAxisSpacing: 16,
           crossAxisSpacing: 16,
-          childAspectRatio: 0.75,
+          childAspectRatio: 0.65,
         ),
         delegate: SliverChildBuilderDelegate(
           (context, index) {
@@ -497,11 +522,19 @@ class _HomeTabState extends ConsumerState<HomeTab> {
           crossAxisCount: 2, // Fixed 2 columns
           mainAxisSpacing: 16,
           crossAxisSpacing: 16,
-          childAspectRatio: 0.75,
+          childAspectRatio: 0.56,
         ),
         delegate: SliverChildBuilderDelegate(
           (context, index) {
             final productMap = cleaned[index];
+            final originalImages = productMap['images'] != null 
+                ? (productMap['images'] as List).map((e) => e.toString()).toList()
+                : null;
+            final filteredImages = _getFilteredImages(
+              productMap['id']?.toString() ?? 'no-id-$index',
+              originalImages
+            );
+            
             final product = Product(
               id: productMap['id']?.toString() ?? 'no-id-$index',
               title: productMap['title']?.toString() ?? 'No title',
@@ -509,8 +542,12 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                   ? int.tryParse(productMap['price'].toString()) ?? 0
                   : 0,
               image: productMap['image']?.toString() ?? 'assets/products/backpack.png',
+              images: filteredImages.isNotEmpty ? filteredImages : null,
               sellerName: productMap['sellerName']?.toString(),
               description: productMap['description']?.toString(),
+              stockQuantity: productMap['stockQuantity'] != null
+                  ? int.tryParse(productMap['stockQuantity'].toString()) ?? 0
+                  : 0,
             );
             final inCart = cart.any((p) => p.id == product.id);
 
@@ -519,13 +556,24 @@ class _HomeTabState extends ConsumerState<HomeTab> {
               product: product,
               inCart: inCart,
               onAddToCart: () {
-                final cartNotifier = ref.read(cartNotifierProvider.notifier);
-                if (inCart) {
-                  cartNotifier.removeProduct(product);
-                  ref.read(cartQuantitiesProvider.notifier).remove(product.id);
+                // Check if product is in stock before adding to cart
+                if (product.isInStock) {
+                  final cartNotifier = ref.read(cartNotifierProvider.notifier);
+                  if (inCart) {
+                    cartNotifier.removeProduct(product);
+                    ref.read(cartQuantitiesProvider.notifier).remove(product.id);
+                  } else {
+                    cartNotifier.addProduct(product);
+                    ref.read(cartQuantitiesProvider.notifier).setQuantity(product.id, 1);
+                  }
                 } else {
-                  cartNotifier.addProduct(product);
-                  ref.read(cartQuantitiesProvider.notifier).setQuantity(product.id, 1);
+                  // Show out of stock message
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('This item is out of stock'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
                 }
               },
               onTap: () {
@@ -551,6 +599,25 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     return 1;
   }
 
+  // Get images filtered by deletion state
+  List<String> _getFilteredImages(String productId, List<String>? originalImages) {
+    final deletionState = ref.read(deletionProvider);
+    final deletedIndices = deletionState[productId] ?? [];
+    
+    if (originalImages == null || originalImages.isEmpty) {
+      return [];
+    }
+    
+    final filteredImages = <String>[];
+    for (int i = 0; i < originalImages.length; i++) {
+      if (!deletedIndices.contains(i.toString())) {
+        filteredImages.add(originalImages[i]);
+      }
+    }
+    
+    return filteredImages;
+  }
+
   void _navigateToProduct(String productId, List<Map<String, dynamic>> products) {
     final productMap = products.firstWhere(
       (p) => p['id']?.toString() == productId,
@@ -558,6 +625,14 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     );
 
     if (productMap.isNotEmpty) {
+      final originalImages = productMap['images'] != null 
+          ? (productMap['images'] as List).map((e) => e.toString()).toList()
+          : null;
+      final filteredImages = _getFilteredImages(
+        productMap['id']?.toString() ?? productId,
+        originalImages
+      );
+      
       final product = Product(
         id: productMap['id']?.toString() ?? productId,
         title: productMap['title']?.toString() ?? 'Product',
@@ -565,8 +640,12 @@ class _HomeTabState extends ConsumerState<HomeTab> {
             ? int.tryParse(productMap['price'].toString()) ?? 0
             : 0,
         image: productMap['image']?.toString() ?? 'assets/products/backpack.png',
+        images: filteredImages.isNotEmpty ? filteredImages : null,
         sellerName: productMap['sellerName']?.toString(),
         description: productMap['description']?.toString(),
+        stockQuantity: productMap['stockQuantity'] != null
+            ? int.tryParse(productMap['stockQuantity'].toString()) ?? 0
+            : 0,
       );
 
       Navigator.push(
@@ -601,8 +680,11 @@ class SleekProductCard extends StatefulWidget {
 class _SleekProductCardState extends State<SleekProductCard> {
   bool _isPressed = false;
 
+
+
   @override
   Widget build(BuildContext context) {
+    final isInStock = widget.product.isInStock;
     return GestureDetector(
       onTapDown: (_) => setState(() => _isPressed = true),
       onTapUp: (_) {
@@ -615,13 +697,13 @@ class _SleekProductCardState extends State<SleekProductCard> {
         transform: Matrix4.identity()..scale(_isPressed ? 0.98 : 1.0),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(30),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.06),
-              spreadRadius: 0,
+              spreadRadius: 5,
               blurRadius: 10,
-              offset: const Offset(0, 2),
+              offset: const Offset(0, 9),
             ),
           ],
         ),
@@ -630,8 +712,9 @@ class _SleekProductCardState extends State<SleekProductCard> {
           children: [
                // Image Section
              Expanded(
-               flex: 3,
+               flex: 2,
                child: ClipRRect(
+                
                  borderRadius: const BorderRadius.only(
                    topLeft: Radius.circular(16),
                    topRight: Radius.circular(16),
@@ -642,9 +725,10 @@ class _SleekProductCardState extends State<SleekProductCard> {
                    color: Colors.grey[50],
                  child: Hero(
                    tag: 'sleek-product-${widget.product.id}',
-                   child: _SleekProductImage(
-                    image: widget.product.image , ),
-
+                   child: ProductImage(
+                     image: widget.product.image,
+                     fit: BoxFit.cover,
+                   ),
                  ),
                ),
                ),
@@ -658,17 +742,57 @@ class _SleekProductCardState extends State<SleekProductCard> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Product Title
-                    Text(
+                    // Stock Status Badge
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isInStock 
+                            ? Colors.green.withOpacity(0.1)
+                            : Colors.red.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: isInStock 
+                              ? Colors.green.withOpacity(0.3)
+                              : Colors.red.withOpacity(0.3),
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            isInStock ? Icons.check_circle : Icons.cancel,
+                            color: isInStock ? Colors.green : Colors.red,
+                            size: 12,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            isInStock ? 'Available' : 'Out of Stock',
+                            style: TextStyle(
+                              color: isInStock ? Colors.green : Colors.red,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    
+                    const SizedBox(height: 8),
+                    
+                    // Product Title with tooltip for long titles
+                    TextUtils.buildTruncatedTitleWidget(
                       widget.product.title,
+                      maxWords: 4,
                       style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
-                        color: Color(0xFF1F2937),
                         height: 1.2,
                       ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                      truncatedColor: const Color(0xFF2196F3),
                     ),
                     
                     const Spacer(),
@@ -688,9 +812,9 @@ class _SleekProductCardState extends State<SleekProductCard> {
                            ),
                          ),
                         
-                                                 // Add Button
+                          // Add Button
                          GestureDetector(
-                           onTap: widget.onAddToCart,
+                           onTap: isInStock ? widget.onAddToCart : null,
                            child: AnimatedContainer(
                              duration: const Duration(milliseconds: 200),
                              padding: const EdgeInsets.symmetric(
@@ -698,15 +822,19 @@ class _SleekProductCardState extends State<SleekProductCard> {
                                vertical: 4,
                              ),
                              decoration: BoxDecoration(
-                               color: widget.inCart 
-                                   ? Colors.orange.shade500
-                                   : const Color(0xFF2196F3),
+                               color: !isInStock
+                                   ? Colors.grey.shade400
+                                   : widget.inCart 
+                                       ? Colors.orange.shade500
+                                       : const Color(0xFF2196F3),
                                borderRadius: BorderRadius.circular(8),
                              ),
                              child: Icon(
-                               widget.inCart 
-                                   ? Icons.remove_shopping_cart
-                                   : Icons.add_shopping_cart,
+                               !isInStock
+                                   ? Icons.block
+                                   : widget.inCart 
+                                       ? Icons.remove_shopping_cart
+                                       : Icons.add_shopping_cart,
                                size: 16,
                                color: Colors.white,
                              ),
@@ -725,68 +853,7 @@ class _SleekProductCardState extends State<SleekProductCard> {
   }
 }
 
-class _SleekProductImage extends StatelessWidget {
-  const _SleekProductImage({required this.image});
 
-  final String image;
-
-  bool get _isNetwork => image.startsWith('http://') || image.startsWith('https://');
-  bool get _isDataUrl => image.startsWith('data:image/');
-
-  @override
-  Widget build(BuildContext context) {
-    if (_isDataUrl) {
-      try {
-        final uri = Uri.parse(image);
-        final data = uri.data;
-        if (data != null) {
-          return Image.memory(
-            data.contentAsBytes(), 
-            fit: BoxFit.cover,
-            width: double.infinity,
-            height: double.infinity,
-          );
-        }
-      } catch (_) {}
-      return Image.asset(
-        'assets/products/backpack.png', 
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
-      );
-    }
-    
-    if (_isNetwork) {
-      return CachedNetworkImage(
-        imageUrl: image,
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
-        placeholder: (context, url) => Container(
-          color: Colors.grey[100],
-          child: const Center(
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        ),
-        errorWidget: (context, url, error) => Container(
-          color: Colors.grey[100],
-          child: Icon(
-            Icons.image_not_supported,
-            size: 32,
-            color: Colors.grey[400],
-          ),
-        ),
-      );
-    }
-    
-    return Image.asset(
-      image, 
-      fit: BoxFit.cover,
-      width: double.infinity,
-      height: double.infinity,
-    );
-  }
-}
 
 class MountainClipper extends CustomClipper<Path> {
   @override

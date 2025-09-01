@@ -1,5 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
+import 'package:e_commerece/providers/cart_provider.dart';
+import 'package:e_commerece/providers/stock_provider.dart';
 
 part 'checkout_provider.g.dart';
 

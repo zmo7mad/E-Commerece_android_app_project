@@ -8,9 +8,6 @@ import 'package:e_commerece/screens/tabs/categories_tab.dart';
 import 'package:salomon_bottom_bar/salomon_bottom_bar.dart';
 import 'package:animations/animations.dart';
 
-
-
-
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
@@ -18,9 +15,10 @@ class HomeScreen extends ConsumerStatefulWidget {
   ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends ConsumerState<HomeScreen> {
+class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObserver {
   //tracking which tab is selected
   int selectedIndex = 0;
+  bool _isInitialized = false;
   
   //list of the tab items in the main screen
   final List<BottomNavigationBarItem> bottomNavigationBarItems = [
@@ -43,12 +41,64 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     ),
   ];
 
-  void _onTabTapped(int index) {
-    setState(() {
-      selectedIndex = index;
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // Delay initialization to ensure proper widget setup
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+        });
+      }
     });
   }
 
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+// app state preservation
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    
+    switch (state) {
+      case AppLifecycleState.resumed:
+        // App came back to foreground - ensure proper state restoration
+        if (mounted) {
+          setState(() {
+            // Force a rebuild to ensure proper state restoration
+          });
+        }
+        break;
+      case AppLifecycleState.inactive:
+        // App is inactive
+        break;
+      case AppLifecycleState.paused:
+        // App is paused (backgrounded)
+        break;
+      case AppLifecycleState.detached:
+        // App is detached (terminated)
+        break;
+      case AppLifecycleState.hidden:
+        // App is hidden
+        break;
+    }
+  }
+
+  // on tab tapped
+  void _onTabTapped(int index) {
+    if (mounted) {
+      setState(() {
+        selectedIndex = index;
+      });
+    }
+  }
+
+  // subtitle for tab
   String _subtitleForTab(int index) {
     switch (index) {
       case 0:
@@ -64,19 +114,26 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
   }
 
-
-
-  //list of the screens in the main screen
+  //list of the screens in the main screen - only non-const widgets will rebuild
   final List<Widget> _screens = [
-    HomeTab(),
-    CategoriesTab(),
-    SearchTab(),
-    ProfileTab(),
+    const HomeTab(),
+    const CategoriesTab(),
+    const SearchTab(),
+    const ProfileTab(),
   ];
-
 
   @override
   Widget build(BuildContext context) {
+    // Show loading indicator while initializing
+    if (!_isInitialized) {
+      return const Scaffold(
+        backgroundColor: Colors.white,
+        body: Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
     return Scaffold(
       body: NestedScrollView(
         headerSliverBuilder: (context, innerBoxIsScrolled) {
@@ -89,18 +146,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               backgroundColor: Colors.white,
               surfaceTintColor: Colors.transparent,
               flexibleSpace: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Theme.of(context).colorScheme.primary,
-                      Theme.of(context).colorScheme.primary,
-                      Colors.white,
-                    ],
-                    stops: const [0, 0.2,1],
-                  ),
-                ),
+                decoration: const BoxDecoration(),
               ),
               title: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -173,25 +219,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           onTap: _onTabTapped,
           items: [
             SalomonBottomBarItem(
-              icon: Icon(Icons.home),
-              title: Text('Home'),
+              icon: const Icon(Icons.home),
+              title: const Text('Home'),
             ),
             SalomonBottomBarItem(
-              icon: Icon(Icons.category),
-              title: Text('Categories'),
+              icon: const Icon(Icons.category),
+              title: const Text('Categories'),
             ),
             SalomonBottomBarItem(
-              icon: Icon(Icons.search),
-              title: Text('Search'),
+              icon: const Icon(Icons.search),
+              title: const Text('Search'),
             ),
             SalomonBottomBarItem(
-              icon: Icon(Icons.person),
-              title: Text('Profile'),
+              icon: const Icon(Icons.person),
+              title: const Text('Profile'),
             ),
           ],
         ),
       ),
     );
-    
   }
 }

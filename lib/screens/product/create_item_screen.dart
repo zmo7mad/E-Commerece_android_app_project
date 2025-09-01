@@ -5,10 +5,10 @@ import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'dart:convert';
-import 'package:image/image.dart' as img;
+import 'package:e_commerece/shared/image_utils.dart';
+import 'package:e_commerece/shared/widgets/category_utils.dart';
 
-import 'package:e_commerece/screens/tabs/categories_tab.dart' show categoriesProductsProvider;
+
 
 class CreateItemScreen extends ConsumerStatefulWidget {
   const CreateItemScreen({super.key});
@@ -24,10 +24,13 @@ class _CreateItemScreenState extends ConsumerState<CreateItemScreen>
   final _priceController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _sellerNameController = TextEditingController();
+  final _stockController = TextEditingController(text: '0'); // Default stock to 0
   
-  File? _selectedImage;
+  List<File> _selectedImages = [];
   final ImagePicker _imagePicker = ImagePicker();
   bool _isLoading = false;
+  static const int maxImages = 3; // Maximum 3 images per product
+  String _selectedCategory = 'Other'; // Default category
   
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
@@ -66,12 +69,26 @@ class _CreateItemScreenState extends ConsumerState<CreateItemScreen>
     _priceController.dispose();
     _descriptionController.dispose();
     _sellerNameController.dispose();
+    _stockController.dispose();
     _animationController.dispose();
     super.dispose();
   }
 
   Future<void> _pickImage(ImageSource source) async {
     try {
+      // Check if we've reached the maximum number of images
+      if (_selectedImages.length >= maxImages) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('You can only select up to $maxImages images'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
+
       // Request permissions only for camera
       if (source == ImageSource.camera) {
         final cameraStatus = await Permission.camera.request();
@@ -93,7 +110,7 @@ class _CreateItemScreenState extends ConsumerState<CreateItemScreen>
 
       if (image != null && mounted) {
         setState(() {
-          _selectedImage = File(image.path);
+          _selectedImages.add(File(image.path));
         });
         
         
@@ -122,6 +139,18 @@ class _CreateItemScreenState extends ConsumerState<CreateItemScreen>
         );
       }
     }
+  }
+
+  void _removeImage(int index) {
+    setState(() {
+      _selectedImages.removeAt(index);
+    });
+  }
+
+  void _clearImages() {
+    setState(() {
+      _selectedImages.clear();
+    });
   }
 
   void _showPermissionDialog(String message) {
@@ -250,7 +279,7 @@ class _CreateItemScreenState extends ConsumerState<CreateItemScreen>
 
       if (image != null && mounted) {
         setState(() {
-          _selectedImage = File(image.path);
+          _selectedImages.add(File(image.path));
         });
         
         
@@ -312,10 +341,10 @@ class _CreateItemScreenState extends ConsumerState<CreateItemScreen>
       return;
     }
 
-    if (_selectedImage == null) {
+    if (_selectedImages.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Please select an image for your item'),
+          content: Text('Please select at least one image for your item'),
           backgroundColor: Colors.orange,
           behavior: SnackBarBehavior.floating,
         ),
@@ -341,34 +370,41 @@ class _CreateItemScreenState extends ConsumerState<CreateItemScreen>
       final double parsedPrice = double.parse(_priceController.text.trim());
       final int priceAsInt = parsedPrice.round();
 
-      String imageFieldValue;
-      try {
-        // Try Firebase Storage first
-        final String storagePath = 'products/${DateTime.now().millisecondsSinceEpoch}.jpg';
-        final Reference storageRef = FirebaseStorage.instance.ref().child(storagePath);
-        final UploadTask uploadTask = storageRef.putFile(_selectedImage!);
-        final TaskSnapshot snapshot = await uploadTask;
-        imageFieldValue = await snapshot.ref.getDownloadURL();
-      } catch (_) {
-        // Fallback: embed a compressed base64 data URL into Firestore
-        final bytes = await _selectedImage!.readAsBytes();
-        final decoded = img.decodeImage(bytes);
-        if (decoded == null) {
-          throw Exception('Failed to process selected image');
+      // Process all selected images
+      List<String> processedImages = [];
+      
+      for (int i = 0; i < _selectedImages.length; i++) {
+        try {
+          // Try Firebase Storage first
+          final String storagePath = 'products/${DateTime.now().millisecondsSinceEpoch}_$i.jpg';
+          final Reference storageRef = FirebaseStorage.instance.ref().child(storagePath);
+          final UploadTask uploadTask = storageRef.putFile(_selectedImages[i]);
+          final TaskSnapshot snapshot = await uploadTask;
+          final imageUrl = await snapshot.ref.getDownloadURL();
+          processedImages.add(imageUrl);
+        } catch (_) {
+          // Fallback: embed a compressed base64 data URL into Firestore
+          final base64Image = await ImageUtils.convertImageToBase64(_selectedImages[i]);
+          if (base64Image != null) {
+            processedImages.add(base64Image);
+          } else {
+            throw Exception('Failed to process image ${i + 1}');
+          }
         }
-        final resized = img.copyResize(decoded, width: 800);
-        final jpg = img.encodeJpg(resized, quality: 70);
-        final b64 = base64Encode(jpg);
-        imageFieldValue = 'data:image/jpeg;base64,' + b64;
       }
+      
+      // Use the first image as the main image for backward compatibility
+      final String mainImage = processedImages.isNotEmpty ? processedImages.first : '';
 
       final Map<String, dynamic> productData = {
         'title': _nameController.text.trim(),
         'price': priceAsInt,
-        'image': imageFieldValue,
-        'category': deriveCategory(_nameController.text + ' ' + _descriptionController.text),
+        'image': mainImage,
+        'images': processedImages,
+        'category': _selectedCategory,
         'sellerName': _sellerNameController.text.trim(),
         'description': _descriptionController.text.trim(),
+        'stockQuantity': int.tryParse(_stockController.text) ?? 0,
         'timesBought': 0,
         'createdAt': FieldValue.serverTimestamp(),
       };
@@ -397,8 +433,9 @@ class _CreateItemScreenState extends ConsumerState<CreateItemScreen>
       _priceController.clear();
       _descriptionController.clear();
       _sellerNameController.clear();
+      _stockController.text = '0'; // Reset stock to 0
       setState(() {
-        _selectedImage = null;
+        _selectedImages.clear();
       });
       
       Navigator.pop(context);
@@ -421,21 +458,7 @@ class _CreateItemScreenState extends ConsumerState<CreateItemScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-           flexibleSpace: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Theme.of(context).colorScheme.primary,
-                      Theme.of(context).colorScheme.primary,
-                      Colors.white,
-                    ],
-                    stops: const [0, 0.2,1],
-                  ),
-                ),
-              ),
+      appBar: AppBar(     
         backgroundColor: Colors.white,
         elevation: 0,
         title: Text(
@@ -478,28 +501,67 @@ class _CreateItemScreenState extends ConsumerState<CreateItemScreen>
                               width: 2,
                             ),
                           ),
-                          child: _selectedImage != null
+                          child: _selectedImages.isNotEmpty
                               ? ClipRRect(
                                   borderRadius: BorderRadius.circular(18),
                                   child: Stack(
                                     children: [
+                                      // Display first image as main image
                                       Image.file(
-                                        _selectedImage!,
+                                        _selectedImages.first,
                                         height: 200,
                                         width: double.infinity,
                                         fit: BoxFit.cover,
                                       ),
+                                      // Image counter badge
+                                      if (_selectedImages.length > 1)
+                                        Positioned(
+                                          top: 8,
+                                          left: 8,
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                            decoration: BoxDecoration(
+                                              color: Colors.black.withOpacity(0.7),
+                                              borderRadius: BorderRadius.circular(12),
+                                            ),
+                                            child: Text(
+                                              '+${_selectedImages.length - 1}',
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      // Add more button
+                                      if (_selectedImages.length < maxImages)
+                                        Positioned(
+                                          top: 8,
+                                          right: 8,
+                                          child: Container(
+                                            decoration: BoxDecoration(
+                                              color: Colors.black.withOpacity(0.6),
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: IconButton(
+                                              icon: const Icon(Icons.add_photo_alternate, color: Colors.white, size: 20),
+                                              onPressed: _showImageSourceDialog,
+                                            ),
+                                          ),
+                                        ),
+                                      // Remove button
                                       Positioned(
-                                        top: 8,
+                                        bottom: 8,
                                         right: 8,
                                         child: Container(
                                           decoration: BoxDecoration(
-                                            color: Colors.black.withOpacity(0.6),
+                                            color: Colors.red.withOpacity(0.8),
                                             shape: BoxShape.circle,
                                           ),
                                           child: IconButton(
-                                            icon: const Icon(Icons.edit, color: Colors.white, size: 20),
-                                            onPressed: _showImageSourceDialog,
+                                            icon: const Icon(Icons.delete, color: Colors.white, size: 20),
+                                            onPressed: () => _clearImages(),
                                           ),
                                         ),
                                       ),
@@ -577,6 +639,8 @@ class _CreateItemScreenState extends ConsumerState<CreateItemScreen>
                             return null;
                           },
                         ),
+                        const SizedBox(height: 16),
+                        _buildCategoryDropdown(),
                       ],
                     ),
                     
@@ -610,6 +674,24 @@ class _CreateItemScreenState extends ConsumerState<CreateItemScreen>
                           validator: (value) {
                             if (value == null || value.isEmpty) {
                               return 'Please enter seller name';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        _buildTextField(
+                          controller: _stockController,
+                          label: 'Stock Quantity',
+                          hint: 'Enter available stock',
+                          icon: Icons.inventory,
+                          keyboardType: TextInputType.number,
+                          validator: (value) {
+                            if (value == null || value.isEmpty) {
+                              return 'Please enter stock quantity';
+                            }
+                            final stock = int.tryParse(value);
+                            if (stock == null || stock < 0) {
+                              return 'Please enter a valid stock quantity';
                             }
                             return null;
                           },
@@ -765,6 +847,58 @@ class _CreateItemScreenState extends ConsumerState<CreateItemScreen>
         filled: true,
         fillColor: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
       ),
+    );
+  }
+
+  Widget _buildCategoryDropdown() {
+    return DropdownButtonFormField<String>(
+      value: _selectedCategory,
+      decoration: InputDecoration(
+        labelText: 'Category',
+        prefixIcon: const Icon(Icons.category_outlined),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(
+            color: Theme.of(context).colorScheme.outline,
+          ),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(
+            color: Theme.of(context).colorScheme.outline.withOpacity(0.5),
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(
+            color: Theme.of(context).colorScheme.primary,
+            width: 2,
+          ),
+        ),
+        filled: true,
+        fillColor: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
+      ),
+      items: CategoryUtils.getAvailableCategories()
+          .where((category) => category != 'All') // Exclude 'All' from creation
+          .map((String category) {
+        return DropdownMenuItem<String>(
+          value: category,
+          child: Text(category),
+        );
+      }).toList(),
+      onChanged: (String? newValue) {
+        if (newValue != null) {
+          setState(() {
+            _selectedCategory = newValue;
+          });
+        }
+      },
+      validator: (value) {
+        if (value == null || value.isEmpty) {
+          return 'Please select a category';
+        }
+        return null;
+      },
     );
   }
 }

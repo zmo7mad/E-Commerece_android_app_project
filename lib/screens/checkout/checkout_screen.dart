@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:e_commerece/models/product.dart';
 import 'package:e_commerece/providers/checkout_provider.dart';
 import 'package:e_commerece/providers/cart_provider.dart';
+import 'package:e_commerece/providers/stock_provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
  
 
@@ -59,10 +60,28 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
   Future<void> _completeOrder() async {
     if (!_formKey.currentState!.validate()) return;
 
+    // Prevent multiple checkout attempts
+    if (ref.read(checkoutNotifierProvider).isProcessing) {
+      return;
+    }
+
+    // Check if cart is empty
+    if (widget.cartProducts.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Your cart is empty'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     // Start checkout processing
     ref.read(checkoutNotifierProvider.notifier).startProcessing();
 
     try {
+      // Add timeout protection
+      await Future.delayed(const Duration(milliseconds: 100)); // Small delay to prevent UI blocking
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -76,6 +95,24 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
       final Map<String, int> productQuantities = {
         for (final p in widget.cartProducts) p.id: (quantities[p.id] ?? 1),
       };
+
+      // Check stock availability before proceeding
+      for (final entry in productQuantities.entries) {
+        try {
+          final docRef = FirebaseFirestore.instance.collection('Products').doc(entry.key);
+          final docSnapshot = await docRef.get();
+          if (docSnapshot.exists) {
+            final currentData = docSnapshot.data() as Map<String, dynamic>;
+            final currentStock = currentData['stockQuantity'] ?? 0;
+            if (currentStock < entry.value) {
+              throw Exception('Insufficient stock for product ${entry.key}. Available: $currentStock, Requested: ${entry.value}');
+            }
+          }
+        } catch (e) {
+          print('Stock check error for product ${entry.key}: $e');
+          throw Exception('Failed to verify stock availability: $e');
+        }
+      }
 
       final orderData = {
         'userId': user.uid,
@@ -101,7 +138,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
           .collection('Orders')
           .add(orderData);
 
-      // Increment product-level purchase counters (only for existing products)
+      // Update product stock and purchase counters
       final batch = FirebaseFirestore.instance.batch();
       for (final entry in productQuantities.entries) {
         try {
@@ -109,13 +146,18 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
           // Check if product exists before updating
           final docSnapshot = await docRef.get();
           if (docSnapshot.exists) {
+            final currentData = docSnapshot.data() as Map<String, dynamic>;
+            final currentStock = currentData['stockQuantity'] ?? 0;
+            final newStock = (currentStock - entry.value).clamp(0, currentStock);
+            
             batch.update(docRef, {
               'timesBought': FieldValue.increment(entry.value),
+              'stockQuantity': newStock,
             });
           }
           // If product doesn't exist, skip updating it (don't create new documents)
         } catch (e) {
-          print('Warning: Could not update timesBought for product ${entry.key}: $e');
+          print('Warning: Could not update product ${entry.key}: $e');
           // Continue with other products even if one fails
         }
       }
@@ -126,7 +168,19 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
         'createdAt': FieldValue.serverTimestamp(),
         'total': widget.cartProducts.fold<int>(0, (sum, p) => sum + p.price * (productQuantities[p.id] ?? 1)),
       });
-      await batch.commit();
+      
+      // Commit batch with timeout protection
+      try {
+        await batch.commit().timeout(
+          const Duration(seconds: 30),
+          onTimeout: () {
+            throw Exception('Checkout timeout: Database operation took too long');
+          },
+        );
+      } catch (e) {
+        print('Batch commit error: $e');
+        throw Exception('Failed to update product information: $e');
+      }
 
       // Update user's purchase history with quantities and product IDs
       await _updateUserPurchaseHistory(user.uid, widget.cartProducts, productQuantities);
@@ -137,6 +191,9 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
         
         // Clear the cart immediately after successful checkout
         ref.read(cartNotifierProvider.notifier).clearCart();
+        
+        // Update stock provider with new stock quantities
+        ref.read(stockProvider.notifier).updateStockAfterPurchase(productQuantities);
         
         // Show success message
         ScaffoldMessenger.of(context).showSnackBar(
@@ -226,20 +283,6 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     );
     return Scaffold(
       appBar: AppBar(
-           flexibleSpace: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Theme.of(context).colorScheme.primary,
-                      Theme.of(context).colorScheme.primary,
-                      Colors.white,
-                    ],
-                    stops: const [0, 0.2,1],
-                  ),
-                ),
-              ),
         backgroundColor: Colors.white,
         title:  Text('Checkout',
         style: TextStyle(
@@ -487,13 +530,26 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                     elevation: 4,
                   ),
                   child: ref.watch(checkoutNotifierProvider).isProcessing
-                      ? const SizedBox(
-                          height: 24,
-                          width: 24,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                          ),
+                      ? Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            const Text(
+                              'Processing...',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
                         )
                       : const Text(
                           'Complete Order',

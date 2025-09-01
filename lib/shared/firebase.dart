@@ -377,4 +377,30 @@ Stream<List<Map<String, dynamic>>> getLatestProductsStream({int limit = 3}) {
   });
 }
 
+/// Update a specific field in a product document
+Future<void> updateProductField(String productId, String fieldName, dynamic value) async {
+  try {
+    final collection = FirebaseFirestore.instance.collection('Products');
+    
+    // First try to find the document by secureId
+    final querySnapshot = await collection
+        .where('secureId', isEqualTo: productId)
+        .limit(1)
+        .get();
+    
+    if (querySnapshot.docs.isNotEmpty) {
+      // Update using secureId
+      await querySnapshot.docs.first.reference.update({fieldName: value});
+    } else {
+      // Fallback: try to update using document ID directly
+      await collection.doc(productId).update({fieldName: value});
+    }
+    
+    print('Successfully updated $fieldName for product $productId');
+  } catch (e) {
+    print('Error updating product field $fieldName for product $productId: $e');
+    rethrow;
+  }
+}
+
 

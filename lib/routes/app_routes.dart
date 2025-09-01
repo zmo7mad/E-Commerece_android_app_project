@@ -5,6 +5,8 @@ import 'package:e_commerece/screens/auth/register_screen.dart';
 import 'package:e_commerece/screens/home/home_screen.dart';
 import 'package:e_commerece/screens/product/item_screen.dart';
 import 'package:e_commerece/screens/product/create_item_screen.dart';
+import 'package:e_commerece/screens/product/stock_management_screen.dart';
+import 'package:e_commerece/screens/debug_user_role_screen.dart';
 import 'package:e_commerece/models/product.dart';
 
 class AppRoutes {
@@ -15,6 +17,8 @@ class AppRoutes {
   static const String home = '/home';
   static const String item = '/item';
   static const String createItem = '/create-item';
+  static const String stockManagement = '/stock-management';
+  static const String debugUserRole = '/debug-user-role';
 
   // Route generation
   static Route<dynamic> generateRoute(RouteSettings settings) {
@@ -71,6 +75,25 @@ class AppRoutes {
           },
           transitionDuration: const Duration(milliseconds: 300),
         );
+      case stockManagement:
+        return PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) => const StockManagementScreen(),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(1.0, 0.0),
+                end: Offset.zero,
+              ).animate(CurvedAnimation(
+                parent: animation,
+                curve: Curves.easeInOut,
+              )),
+              child: child,
+            );
+          },
+          transitionDuration: const Duration(milliseconds: 300),
+        );
+      case debugUserRole:
+        return MaterialPageRoute(builder: (_) => const DebugUserRoleScreen());
       default:
         return MaterialPageRoute(
           builder: (_) => const Scaffold(
@@ -99,7 +122,15 @@ class AppRoutes {
     Navigator.of(context).pushNamed(item, arguments: product);
   }
 
+  static void navigateToStockManagement(BuildContext context) {
+    Navigator.of(context).pushNamed(stockManagement);
+  }
+
   static void navigateToCreateItem(BuildContext context) {
     Navigator.of(context).pushNamed(createItem);
+  }
+
+  static void navigateToDebugUserRole(BuildContext context) {
+    Navigator.of(context).pushNamed(debugUserRole);
   }
 }
