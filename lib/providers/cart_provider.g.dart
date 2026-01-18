@@ -23,7 +23,7 @@ final cartTotalProvider = AutoDisposeProvider<int>.internal(
 @Deprecated('Will be removed in 3.0. Use Ref instead')
 // ignore: unused_element
 typedef CartTotalRef = AutoDisposeProviderRef<int>;
-String _$cartNotifierHash() => r'c31235cafc2696ff7c4ebe54db49da1fe04cf0ff';
+String _$cartNotifierHash() => r'31da470c59a0e10e8fb45d24daa29c1a264c176d';
 
 /// See also [CartNotifier].
 @ProviderFor(CartNotifier)

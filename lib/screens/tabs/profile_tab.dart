@@ -1,12 +1,14 @@
-import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:e_commerece/providers/wallet_provider.dart';
 import 'package:e_commerece/routes/app_routes.dart';
-import 'package:e_commerece/screens/my_orders_screen.dart';
 import 'package:e_commerece/screens/favorites_screen.dart';
+import 'package:e_commerece/screens/my_orders_screen.dart';
 import 'package:e_commerece/screens/edit_profile_screen.dart';
+import 'package:e_commerece/screens/wallet/wallet_transactions_screen.dart';
 import 'package:e_commerece/providers/user_role_provider.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 class ProfileTab extends ConsumerStatefulWidget {
   const ProfileTab({super.key});
@@ -35,7 +37,8 @@ class _ProfileTabState extends ConsumerState<ProfileTab> with WidgetsBindingObse
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _loadUserData(); // Refresh data when app resumes
+      _loadUserData();
+      ref.read(walletNotifierProvider.notifier).refresh();
     }
   }
 
@@ -108,6 +111,15 @@ class _ProfileTabState extends ConsumerState<ProfileTab> with WidgetsBindingObse
     );
   }
 
+  void _showWalletDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return const WalletDialog();
+      },
+    );
+  }
+
   Future<void> _logout(BuildContext context) async {
     try {
       await FirebaseAuth.instance.signOut();
@@ -123,16 +135,17 @@ class _ProfileTabState extends ConsumerState<ProfileTab> with WidgetsBindingObse
     }
   }
 
-    @override
+  @override
   Widget build(BuildContext context) {
     final userRoleAsync = ref.watch(autoRefreshUserRoleProvider);
+    final walletState = ref.watch(walletNotifierProvider);
     
     return Scaffold(
       body: SingleChildScrollView(
         child: Container(
           width: double.infinity,
           padding: const EdgeInsets.all(20),
-          child: _isLoading
+          child: _isLoading || walletState.isLoading
               ? const Center(
                   child: CircularProgressIndicator(),
                 )
@@ -155,27 +168,106 @@ class _ProfileTabState extends ConsumerState<ProfileTab> with WidgetsBindingObse
                       ),
                     ),
                     const SizedBox(height: 16),
-                        // User Role Badge
-                     userRoleAsync.when(
-                       data: (role) => Container(
-                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                         decoration: BoxDecoration(
-                           color: role == 'seller' ? Colors.orange : Colors.blue,
-                           borderRadius: BorderRadius.circular(20),
-                         ),
-                         child: Text(
-                           role == 'seller' ? 'Seller' : 'User',
-                           style: const TextStyle(
-                             color: Colors.white,
-                             fontWeight: FontWeight.bold,
-                             fontSize: 12,
-                           ),
-                         ),
-                       ),
-                       loading: () => const CircularProgressIndicator(),
-                       error: (_, __) => const Text('Error loading role'),
-                     ),
+                    // User Role Badge
+                    userRoleAsync.when(
+                      data: (role) => Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: role == 'seller' ? Colors.orange : Colors.blue,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          role == 'seller' ? 'Seller' : 'User',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                      loading: () => const CircularProgressIndicator(),
+                      error: (_, __) => const Text('Error loading role'),
+                    ),
                     const SizedBox(height: 16),
+                    
+                    // E-Wallet Card
+                    GestureDetector(
+                      onTap: _showWalletDialog,
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              Colors.deepPurple,
+                              Colors.deepPurple.shade700,
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.deepPurple.withOpacity(0.3),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  'E-Wallet Balance',
+                                  style: TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                Icon(
+                                  Icons.account_balance_wallet,
+                                  color: Colors.white70,
+                                  size: 24,
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              '\$${walletState.balance.toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 32,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Row(
+                              children: const [
+                                Text(
+                                  'Tap to manage wallet',
+                                  style: TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                SizedBox(width: 4),
+                                Icon(
+                                  Icons.arrow_forward_ios,
+                                  color: Colors.white70,
+                                  size: 12,
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    
                     // User Info Section
                     Container(
                       width: double.infinity,
@@ -185,7 +277,6 @@ class _ProfileTabState extends ConsumerState<ProfileTab> with WidgetsBindingObse
                         borderRadius: BorderRadius.circular(12),
                         boxShadow: [
                           BoxShadow(
-                           
                             color: Colors.black.withOpacity(0.1),
                             blurRadius: 10,
                             offset: const Offset(0, 2),
@@ -199,14 +290,12 @@ class _ProfileTabState extends ConsumerState<ProfileTab> with WidgetsBindingObse
                             Icons.person,
                             'Name',
                             _userData?['name'] ?? 'Not provided',
-                            
                           ),
                           const SizedBox(height: 12),
                           _buildInfoRow(
                             Icons.email,
                             'Email',
                             FirebaseAuth.instance.currentUser?.email ?? 'Not provided',
-                        
                           ),
                           const SizedBox(height: 12),
                           _buildInfoRow(
@@ -234,26 +323,24 @@ class _ProfileTabState extends ConsumerState<ProfileTab> with WidgetsBindingObse
                                 ),
                               );
                               
-                              // Refresh data if profile was updated
                               if (result == true) {
                                 _loadUserData();
                               }
                             },
-                            child: const Text('Edit Profile',
-                            
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.blue,
+                            child: const Text(
+                              'Edit Profile',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.blue,
+                              ),
                             ),
                           ),
-                        ),
                         ],
-                
                       ),
-                
                     ),
                     const SizedBox(height: 40),
+                    
                     // Favorites Button
                     SizedBox(
                       width: double.infinity,
@@ -292,6 +379,7 @@ class _ProfileTabState extends ConsumerState<ProfileTab> with WidgetsBindingObse
                       ),
                     ),
                     const SizedBox(height: 16),
+                    
                     SizedBox(
                       width: double.infinity,
                       height: 50,
@@ -321,6 +409,7 @@ class _ProfileTabState extends ConsumerState<ProfileTab> with WidgetsBindingObse
                         ),
                       ),
                     ),
+                    
                     // Seller-only buttons
                     userRoleAsync.when(
                       data: (role) {
@@ -396,7 +485,8 @@ class _ProfileTabState extends ConsumerState<ProfileTab> with WidgetsBindingObse
                       error: (_, __) => const SizedBox.shrink(),
                     ),
                     const SizedBox(height: 16),
-                    // Debug button (temporary for testing)
+                    
+                    // Debug button
                     SizedBox(
                       width: double.infinity,
                       height: 50,
@@ -420,6 +510,7 @@ class _ProfileTabState extends ConsumerState<ProfileTab> with WidgetsBindingObse
                       ),
                     ),
                     const SizedBox(height: 16),
+                    
                     SizedBox(
                       width: double.infinity,
                       height: 50,
@@ -448,4 +539,168 @@ class _ProfileTabState extends ConsumerState<ProfileTab> with WidgetsBindingObse
       ),
     );
   }
-} 
+}
+
+// Wallet Dialog Widget
+class WalletDialog extends ConsumerStatefulWidget {
+  const WalletDialog({super.key});
+
+  @override
+  ConsumerState<WalletDialog> createState() => _WalletDialogState();
+}
+
+class _WalletDialogState extends ConsumerState<WalletDialog> {
+  final TextEditingController _amountController = TextEditingController();
+  bool _isLoading = false;
+
+  Future<void> _addFunds() async {
+    final amount = double.tryParse(_amountController.text);
+    if (amount == null || amount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a valid amount')),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      await ref.read(walletNotifierProvider.notifier).addFunds(amount);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Successfully added \$${amount.toStringAsFixed(2)}')),
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final walletState = ref.watch(walletNotifierProvider);
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'E-Wallet',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.deepPurple.shade50,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                children: [
+                  const Text(
+                    'Current Balance',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.black54,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '\$${walletState.balance.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.deepPurple,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            TextField(
+              controller: _amountController,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: 'Amount to Add',
+                prefixText: '\$ ',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                filled: true,
+                fillColor: Colors.grey.shade50,
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton(
+                onPressed: _isLoading ? null : _addFunds,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.deepPurple,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: _isLoading
+                    ? const CircularProgressIndicator(color: Colors.white)
+                    : const Text(
+                        'Add Funds',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                // Navigate to transaction history
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const WalletTransactionsScreen(),
+                  ),
+                );
+              },
+              child: const Text('View Transaction History'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

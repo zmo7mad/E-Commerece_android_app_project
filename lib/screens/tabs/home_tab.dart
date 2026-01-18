@@ -19,40 +19,25 @@ class HomeTab extends ConsumerStatefulWidget {
   ConsumerState<HomeTab> createState() => _HomeTabState();
 }
 
-class _HomeTabState extends ConsumerState<HomeTab> {
+class _HomeTabState extends ConsumerState<HomeTab> with AutomaticKeepAliveClientMixin
+{
   @override
-  void initState() {
-    super.initState();
-    // StreamProvider automatically handles real-time updates
-    // Initialize stock provider when products are loaded
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _initializeStockProvider();
-    });
-  }
-
-  void _initializeStockProvider() {
-    final productsAsync = ref.read(productsStreamProvider);
-    productsAsync.whenData((products) {
-      if (products.isNotEmpty) {
-        StockUtils.initializeStockProvider(ref, products);
-      }
-    });
-  }
-
+  bool get wantKeepAlive => true;
+@override
+void initState() {
+  super.initState();
+  debugPrint('HomeTab initialized');
+}
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     // Watch the providers
     final asyncProducts = ref.watch(productsStreamProvider);
-    final asyncLatest = ref.watch(latestProductsStreamProvider);
+    final asyncLatest = ref.watch(latestProductsProvider);
     final cart = ref.watch(cartNotifierProvider);
     final stock = ref.watch(stockProvider); // Watch stock provider for real-time updates
     
-    // Sync stock provider when products are loaded
-    asyncProducts.whenData((products) {
-      if (products.isNotEmpty) {
-        StockUtils.initializeStockProvider(ref, products);
-      }
-    });
+  
 
     return Container(
       decoration: const BoxDecoration(
@@ -454,7 +439,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
               ElevatedButton.icon(
                 onPressed: () {
                   ref.invalidate(productsStreamProvider);
-                  ref.invalidate(latestProductsStreamProvider);
+                 
                 },
                 icon: const Icon(Icons.refresh),
                 label: const Text('Retry'),

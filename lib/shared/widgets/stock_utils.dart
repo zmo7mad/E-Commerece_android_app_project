@@ -8,7 +8,7 @@ class StockUtils {
     WidgetRef ref,
     List<Map<String, dynamic>> products,
   ) {
-    ref.read(stockProvider.notifier).syncStockFromProducts(products);
+    ref.read(stockNotifierProvider.notifier).syncStockFromProducts(products);
   }
 
   /// Gets stock status text based on stock quantity

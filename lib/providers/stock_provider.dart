@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:e_commerece/models/product.dart';
 import 'package:e_commerece/shared/firebase.dart';
+import 'package:e_commerece/providers/products_stream_provider.dart';
 
 // Provider to manage stock updates
 class StockNotifier extends StateNotifier<Map<String, int>> {
@@ -66,15 +67,39 @@ class StockNotifier extends StateNotifier<Map<String, int>> {
   }
 }
 
-// Stock provider
-final stockProvider = StateNotifierProvider<StockNotifier, Map<String, int>>((ref) {
+// Stock provider that syncs with products stream
+final stockProvider = StreamProvider<Map<String, int>>((ref) {
+  return ref.watch(productsStreamProvider).when(
+    data: (products) {
+      // Sync stock data from products
+      final stockData = <String, int>{};
+      for (final product in products) {
+        final productId = product['id']?.toString() ?? '';
+        final stockQuantity = product['stockQuantity'] != null
+            ? int.tryParse(product['stockQuantity'].toString()) ?? 0
+            : 0;
+        stockData[productId] = stockQuantity;
+      }
+      return Stream.value(stockData);
+    },
+    loading: () => Stream.value(<String, int>{}),
+    error: (error, stack) => Stream.error(error, stack),
+  );
+});
+
+// Stock notifier provider for updating stock
+final stockNotifierProvider = StateNotifierProvider<StockNotifier, Map<String, int>>((ref) {
   return StockNotifier();
 });
 
 // Provider to get stock for a specific product
 final productStockProvider = Provider.family<int, String>((ref, productId) {
-  final stock = ref.watch(stockProvider);
-  return stock[productId] ?? 0;
+  final stockAsync = ref.watch(stockProvider);
+  return stockAsync.when(
+    data: (stock) => stock[productId] ?? 0,
+    loading: () => 0,
+    error: (_, __) => 0,
+  );
 });
 
 // Provider to check if product is in stock
@@ -88,8 +113,6 @@ final productSufficientStockProvider = Provider.family<bool, ({String productId,
   final stock = ref.watch(productStockProvider(params.productId));
   return stock >= params.quantity;
 });
-
-
 
 // Helper function to update stock in Firebase
 Future<void> updateProductStockInFirebase(String productId, int newStockQuantity) async {

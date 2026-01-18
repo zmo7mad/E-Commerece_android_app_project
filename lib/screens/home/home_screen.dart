@@ -7,6 +7,8 @@ import 'package:e_commerece/screens/tabs/search_tab.dart';
 import 'package:e_commerece/screens/tabs/categories_tab.dart';
 import 'package:salomon_bottom_bar/salomon_bottom_bar.dart';
 import 'package:animations/animations.dart';
+import 'package:e_commerece/providers/products_stream_provider.dart';
+import 'package:e_commerece/shared/widgets/stock_utils.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -16,22 +18,20 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObserver {
-  //tracking which tab is selected
   int selectedIndex = 0;
   bool _isInitialized = false;
+  bool _stockProviderInitialized = false;
   
-  //list of the tab items in the main screen
   final List<BottomNavigationBarItem> bottomNavigationBarItems = [
     const BottomNavigationBarItem(
       icon: Icon(Icons.home),
       label: 'Home',
     ),
-  
     const BottomNavigationBarItem(
       icon: Icon(Icons.category),
       label: 'Categories',
     ),
-      const BottomNavigationBarItem(
+    const BottomNavigationBarItem(
       icon: Icon(Icons.search),
       label: 'Search',
     ),
@@ -45,14 +45,33 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // Delay initialization to ensure proper widget setup
+    
+    // SIMPLIFIED: Just wait for the widget tree to be ready
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         setState(() {
           _isInitialized = true;
         });
+        // Initialize stock provider once when app starts
+        _initializeStockProvider();
       }
     });
+  }
+
+  // SIMPLIFIED: Only initialize stock provider, no complex logic
+  void _initializeStockProvider() {
+    try {
+      final productsAsync = ref.read(productsStreamProvider);
+      productsAsync.whenData((products) {
+        if (products.isNotEmpty && mounted && !_stockProviderInitialized) {
+          StockUtils.initializeStockProvider(ref, products);
+          _stockProviderInitialized = true;
+          debugPrint('✅ Stock provider initialized successfully');
+        }
+      });
+    } catch (e) {
+      debugPrint('❌ Error initializing stock provider: $e');
+    }
   }
 
   @override
@@ -60,79 +79,120 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
-// app state preservation
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     
-    switch (state) {
-      case AppLifecycleState.resumed:
-        // App came back to foreground - ensure proper state restoration
-        if (mounted) {
-          setState(() {
-            // Force a rebuild to ensure proper state restoration
-          });
-        }
-        break;
-      case AppLifecycleState.inactive:
-        // App is inactive
-        break;
-      case AppLifecycleState.paused:
-        // App is paused (backgrounded)
-        break;
-      case AppLifecycleState.detached:
-        // App is detached (terminated)
-        break;
-      case AppLifecycleState.hidden:
-        // App is hidden
-        break;
-    }
-  }
-
-  // on tab tapped
-  void _onTabTapped(int index) {
-    if (mounted) {
+    if (state == AppLifecycleState.resumed && mounted) {
       setState(() {
-        selectedIndex = index;
+        // Force rebuild on app resume
       });
     }
   }
 
-  // subtitle for tab
-  String _subtitleForTab(int index) {
-    switch (index) {
-      case 0:
-        return 'Discover amazing products';
-      case 1:
-        return 'Browse by category';
-      case 2:
-        return 'Find what you need';
-      case 3:
-        return 'Your account';
-      default:
-        return 'Welcome';
+  void _onTabTapped(int index) {
+    if (mounted && index != selectedIndex) {
+      try {
+        setState(() {
+          selectedIndex = index;
+        });
+        debugPrint('🔄 Tab switched to: $index');
+      } catch (e) {
+        debugPrint('❌ Error switching tabs: $e');
+      }
     }
   }
 
-  //list of the screens in the main screen - only non-const widgets will rebuild
-  final List<Widget> _screens = [
-    const HomeTab(),
-    const CategoriesTab(),
-    const SearchTab(),
-    const ProfileTab(),
-  ];
+  String _subtitleForTab(int index) {
+    switch (index) {
+      case 0: return 'Discover amazing products';
+      case 1: return 'Browse by category';
+      case 2: return 'Find what you need';
+      case 3: return 'Your account';
+      default: return 'Welcome';
+    }
+  }
+
+  Widget _buildScreen(int index) {
+    try {
+      switch (index) {
+        case 0: return const HomeTab();
+        case 1: return const CategoriesTab();
+        case 2: return const SearchTab();
+        case 3: return const ProfileTab();
+        default: return const HomeTab();
+      }
+    } catch (e) {
+      debugPrint('❌ Error building screen $index: $e');
+      return _buildErrorScreen(e.toString());
+    }
+  }
+
+  Widget _buildErrorScreen(String error) {
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, size: 64, color: Colors.red),
+            const SizedBox(height: 16),
+            const Text(
+              'Something went wrong',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              error,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: () {
+                setState(() {
+                  selectedIndex = 0; // Go back to home
+                });
+              },
+              child: const Text('Go to Home'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    // Show loading indicator while initializing
     if (!_isInitialized) {
       return const Scaffold(
         backgroundColor: Colors.white,
         body: Center(
-          child: CircularProgressIndicator(),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Starting app...'),
+            ],
+          ),
         ),
       );
     }
+
+    // Keep stock provider in sync (but don't re-initialize)
+    final productsAsync = ref.watch(productsStreamProvider);
+    productsAsync.whenData((products) {
+      if (products.isNotEmpty && mounted && !_stockProviderInitialized) {
+        try {
+          StockUtils.initializeStockProvider(ref, products);
+          _stockProviderInitialized = true;
+          debugPrint('🔄 Stock provider synced from build');
+        } catch (e) {
+          debugPrint('❌ Error syncing stock provider: $e');
+        }
+      }
+    });
 
     return Scaffold(
       body: NestedScrollView(
@@ -156,18 +216,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
                     children: [
                       Icon(
                         Icons.shopping_basket_rounded,
-                        color: innerBoxIsScrolled
-                            ? Theme.of(context).colorScheme.primary
-                            : Theme.of(context).colorScheme.primary,
+                        color: Theme.of(context).colorScheme.primary,
                         size: 22,
                       ),
                       const SizedBox(width: 8),
                       Text(
                         'ShopEase',
                         style: TextStyle(
-                          color: innerBoxIsScrolled
-                              ? Theme.of(context).colorScheme.primary
-                              : Theme.of(context).colorScheme.primary,
+                          color: Theme.of(context).colorScheme.primary,
                           fontSize: 18,
                           fontWeight: FontWeight.w700,
                         ),
@@ -178,19 +234,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
                   Text(
                     _subtitleForTab(selectedIndex),
                     style: TextStyle(
-                      color: (innerBoxIsScrolled
-                              ? Theme.of(context).colorScheme.primary
-                              : Theme.of(context).colorScheme.primary)
-                          .withOpacity(0.85),
+                      color: Theme.of(context).colorScheme.primary.withOpacity(0.85),
                       fontSize: 12,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
                 ],
               ),
-              actions: const [
-                CartIcon(),
-              ],
+              actions: const [CartIcon()],
               shape: const Border(
                 bottom: BorderSide(color: Color(0x1A000000), width: 0.5),
               ),
@@ -198,7 +249,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
           ];
         },
         body: PageTransitionSwitcher(
-          duration: const Duration(milliseconds: 200),
+          duration: const Duration(milliseconds: 300),
           transitionBuilder: (Widget child, Animation<double> primaryAnimation, Animation<double> secondaryAnimation) {
             return FadeThroughTransition(
               animation: primaryAnimation,
@@ -208,7 +259,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
           },
           child: KeyedSubtree(
             key: ValueKey<int>(selectedIndex),
-            child: _screens[selectedIndex],
+            child: _buildScreen(selectedIndex),
           ),
         ),
       ),

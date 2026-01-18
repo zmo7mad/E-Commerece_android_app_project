@@ -46,7 +46,7 @@ class _SearchTabState extends ConsumerState<SearchTab> with WidgetsBindingObserv
 
   void _initializeStockProvider() {
     // Initialize stock provider with product data
-    final asyncProducts = ref.read(searchProductsStreamProvider);
+    final asyncProducts = ref.read(productsStreamProvider);
     asyncProducts.whenData((products) {
       StockUtils.initializeStockProvider(ref, products);
     });
@@ -149,7 +149,7 @@ class _SearchTabState extends ConsumerState<SearchTab> with WidgetsBindingObserv
       );
     }
 
-    final asyncProducts = ref.watch(searchProductsStreamProvider);
+    final asyncProducts = ref.watch(productsStreamProvider);
     final stock = ref.watch(stockProvider);
 
     return Scaffold(

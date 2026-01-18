@@ -7,7 +7,6 @@ import 'package:e_commerece/providers/cart_provider.dart';
 import 'package:e_commerece/providers/products_stream_provider.dart';
 import 'package:e_commerece/shared/widgets/product_image.dart';
 import 'package:e_commerece/shared/widgets/text_utils.dart';
-import 'package:e_commerece/shared/widgets/stock_utils.dart';
 import 'package:e_commerece/shared/widgets/category_utils.dart';
 import 'package:e_commerece/providers/stock_provider.dart';
 
@@ -18,69 +17,32 @@ class CategoriesTab extends ConsumerStatefulWidget {
   ConsumerState<CategoriesTab> createState() => _CategoriesTabState();
 }
 
-class _CategoriesTabState extends ConsumerState<CategoriesTab> {
+class _CategoriesTabState extends ConsumerState<CategoriesTab> 
+    with AutomaticKeepAliveClientMixin {
   String selectedCategory = 'All';
-  bool _isInitialized = false;
+  
+  // Keep the tab alive to prevent recreation
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
     super.initState();
-    // Delay initialization to prevent race conditions
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _initializeStockProvider();
-        setState(() {
-          _isInitialized = true;
-        });
-      }
-    });
+    debugPrint('CategoriesTab initialized');
   }
 
-  void _initializeStockProvider() {
-    try {
-      final productsAsync = ref.read(categoriesProductsStreamProvider);
-      productsAsync.whenData((products) {
-        if (products.isNotEmpty && mounted) {
-          StockUtils.initializeStockProvider(ref, products);
-        }
-      });
-    } catch (e) {
-      debugPrint('Error initializing stock provider in CategoriesTab: $e');
-    }
+  @override
+  void dispose() {
+    debugPrint('CategoriesTab disposed');
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // Show loading indicator while initializing
-    if (!_isInitialized) {
-      return const Scaffold(
-        backgroundColor: Colors.white,
-        body: Center(
-          child: CircularProgressIndicator(),
-        ),
-      );
-    }
-
-    final asyncProducts = ref.watch(categoriesProductsStreamProvider);
+    super.build(context); // Required for AutomaticKeepAliveClientMixin
+    
+    final asyncProducts = ref.watch(productsStreamProvider);
     final cart = ref.watch(cartNotifierProvider);
-    
-    // Add null safety check
-    try {
-      final stock = ref.watch(stockProvider);
-    } catch (e) {
-      debugPrint('Error watching stock provider: $e');
-    }
-    
-    // Sync stock provider when products are loaded with error handling
-    asyncProducts.whenData((products) {
-      try {
-        if (products.isNotEmpty && mounted) {
-          StockUtils.initializeStockProvider(ref, products);
-        }
-      } catch (e) {
-        debugPrint('Error syncing stock provider: $e');
-      }
-    });
 
     return Scaffold(
       body: asyncProducts.when(
@@ -113,14 +75,14 @@ class _CategoriesTabState extends ConsumerState<CategoriesTab> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Error: $err',
+                  'Please try again',
                   style: TextStyle(color: Colors.grey[600]),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 16),
                 ElevatedButton(
                   onPressed: () {
-                    ref.invalidate(categoriesProductsStreamProvider);
+                    ref.invalidate(productsStreamProvider);
                   },
                   child: const Text('Retry'),
                 ),
@@ -140,12 +102,10 @@ class _CategoriesTabState extends ConsumerState<CategoriesTab> {
                   const Icon(Icons.error, size: 64, color: Colors.red),
                   const SizedBox(height: 16),
                   const Text('Error displaying categories'),
-                  const SizedBox(height: 8),
-                  Text('$e'),
                   const SizedBox(height: 16),
                   ElevatedButton(
                     onPressed: () {
-                      ref.invalidate(categoriesProductsStreamProvider);
+                      ref.invalidate(productsStreamProvider);
                     },
                     child: const Text('Retry'),
                   ),
@@ -162,13 +122,22 @@ class _CategoriesTabState extends ConsumerState<CategoriesTab> {
     // Add null and type checks for products
     if (products.isEmpty) {
       return const Center(
-        child: Text('No products available'),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.inventory_2_outlined, size: 64, color: Colors.grey),
+            SizedBox(height: 16),
+            Text('No products available'),
+          ],
+        ),
       );
     }
 
-    // FIXED: Only remove items that are clearly invalid/placeholder
+    // Filter valid products more safely
     final validProducts = products.where((productMap) {
       try {
+        if (productMap == null) return false;
+        
         final String title = (productMap['title'] ?? '').toString().trim();
         final String image = (productMap['image'] ?? '').toString().trim();
         
@@ -183,6 +152,19 @@ class _CategoriesTabState extends ConsumerState<CategoriesTab> {
       }
     }).toList();
 
+    if (validProducts.isEmpty) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.category_outlined, size: 64, color: Colors.grey),
+            SizedBox(height: 16),
+            Text('No valid products found'),
+          ],
+        ),
+      );
+    }
+
     // Build categories list from valid data
     final Set<String> categories = {'All'};
     for (final p in validProducts) {
@@ -190,7 +172,9 @@ class _CategoriesTabState extends ConsumerState<CategoriesTab> {
         final cat = (p['category']?.toString().trim().isNotEmpty == true)
             ? p['category'].toString()
             : CategoryUtils.deriveCategory(p['title']?.toString() ?? '');
-        categories.add(cat);
+        if (cat.isNotEmpty) {
+          categories.add(cat);
+        }
       } catch (e) {
         debugPrint('Error processing category for product: $e');
       }
@@ -276,36 +260,65 @@ class _CategoriesTabState extends ConsumerState<CategoriesTab> {
           ),
         ),
         // Product grid with sliver layout
-        SliverPadding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          sliver: SliverGrid(
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              mainAxisSpacing: 20,
-              crossAxisSpacing: 16,
-              childAspectRatio: 0.56,
+        filtered.isEmpty 
+          ? SliverToBoxAdapter(
+              child: Container(
+                height: 200,
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.search_off, size: 48, color: Colors.grey[400]),
+                      const SizedBox(height: 16),
+                      Text(
+                        'No products found in "$selectedCategory"',
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            )
+          : SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              sliver: SliverGrid(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  mainAxisSpacing: 20,
+                  crossAxisSpacing: 16,
+                  childAspectRatio: 0.56,
+                ),
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    try {
+                      return _buildProductItem(filtered[index], cart);
+                    } catch (e) {
+                      debugPrint('Error building product item at index $index: $e');
+                      return Container(
+                        decoration: BoxDecoration(
+                          color: Colors.grey[200],
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: const Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.error, color: Colors.red),
+                              SizedBox(height: 8),
+                              Text('Error loading product'),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
+                  },
+                  childCount: filtered.length,
+                ),
+              ),
             ),
-            delegate: SliverChildBuilderDelegate(
-              (context, index) {
-                try {
-                  return _buildProductItem(filtered[index], cart);
-                } catch (e) {
-                  debugPrint('Error building product item at index $index: $e');
-                  return Container(
-                    decoration: BoxDecoration(
-                      color: Colors.grey[200],
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Center(
-                      child: Text('Error loading product'),
-                    ),
-                  );
-                }
-              },
-              childCount: filtered.length,
-            ),
-          ),
-        ),
         // Bottom padding for better scrolling experience
         const SliverToBoxAdapter(
           child: SizedBox(height: 20),
@@ -315,18 +328,38 @@ class _CategoriesTabState extends ConsumerState<CategoriesTab> {
   }
 
   Widget _buildProductItem(Map<String, dynamic> p, Set<Product> cart) {
+    if (p == null) {
+      return Container(
+        decoration: BoxDecoration(
+          color: Colors.grey[200],
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: const Center(child: Text('Invalid product data')),
+      );
+    }
+
     final String title = (p['title'] ?? '').toString();
     final int price = p['price'] is int
         ? p['price'] as int
         : int.tryParse(p['price']?.toString() ?? '') ?? 0;
     final String image = (p['image'] ?? '').toString();
-    final int stockQuantity = p['stockQuantity'] != null
-        ? int.tryParse(p['stockQuantity'].toString()) ?? 0
-        : 0;
+    final String productId = (p['id'] ?? '').toString();
+    
+    // Get real-time stock data from stockProvider
+    final stockAsync = ref.watch(stockProvider);
+    final int stockQuantity = stockAsync.when(
+      data: (stock) => stock[productId] ?? 0,
+      loading: () => p['stockQuantity'] != null
+          ? int.tryParse(p['stockQuantity'].toString()) ?? 0
+          : 0,
+      error: (_, __) => p['stockQuantity'] != null
+          ? int.tryParse(p['stockQuantity'].toString()) ?? 0
+          : 0,
+    );
     
     // Create product for cart checking
     final product = Product(
-      id: (p['id'] ?? '').toString(),
+      id: productId,
       title: title,
       price: price,
       image: image,
@@ -334,7 +367,8 @@ class _CategoriesTabState extends ConsumerState<CategoriesTab> {
       description: p['description']?.toString(),
       stockQuantity: stockQuantity,
     );
-    final inCart = cart.any((p) => p.id == product.id);
+    
+    final inCart = cart.any((cartProduct) => cartProduct.id == product.id);
 
     return OpenContainer(
       closedElevation: 0,
@@ -346,9 +380,9 @@ class _CategoriesTabState extends ConsumerState<CategoriesTab> {
         borderRadius: BorderRadius.circular(20),
       ),
       openBuilder: (context, close) {
-        // Navigate to item screen requires Product model
-        final product = Product(
-          id: (p['id'] ?? '').toString(),
+        // Create full product for navigation
+        final fullProduct = Product(
+          id: productId,
           title: title,
           price: price,
           image: image,
@@ -359,7 +393,7 @@ class _CategoriesTabState extends ConsumerState<CategoriesTab> {
           description: p['description']?.toString(),
           stockQuantity: stockQuantity,
         );
-        return ItemScreen(product: product);
+        return ItemScreen(product: fullProduct);
       },
       closedBuilder: (context, open) {
         return Material(
@@ -479,6 +513,8 @@ class _CategoriesTabState extends ConsumerState<CategoriesTab> {
                               // Add to Cart Button
                               GestureDetector(
                                 onTap: product.isInStock ? () {
+                                  if (!mounted) return;
+                                  
                                   try {
                                     final cartNotifier = ref.read(cartNotifierProvider.notifier);
                                     if (inCart) {
@@ -495,6 +531,7 @@ class _CategoriesTabState extends ConsumerState<CategoriesTab> {
                                         const SnackBar(
                                           content: Text('Error updating cart'),
                                           backgroundColor: Colors.red,
+                                          duration: Duration(seconds: 2),
                                         ),
                                       );
                                     }

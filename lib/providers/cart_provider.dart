@@ -34,8 +34,12 @@ class CartNotifier extends _$CartNotifier {
   void addProduct(Product product) {
     if (!state.any((p) => p.id == product.id)) {
       // Check stock availability before adding to cart
-      final stockNotifier = ref.read(stockProvider.notifier);
-      final currentStock = stockNotifier.getStock(product.id);
+      final stockAsync = ref.read(stockProvider);
+      final currentStock = stockAsync.when(
+        data: (stock) => stock[product.id] ?? 0,
+        loading: () => product.stockQuantity,
+        error: (_, __) => product.stockQuantity,
+      );
       
       if (currentStock > 0) {
         state = {...state, product};
@@ -98,8 +102,12 @@ class CartQuantitiesNotifier extends StateNotifier<Map<String, int>> {
       state = newState;
     } else {
       // Check stock availability before setting quantity
-      final stockNotifier = ref.read(stockProvider.notifier);
-      final currentStock = stockNotifier.getStock(productId);
+      final stockAsync = ref.read(stockProvider);
+      final currentStock = stockAsync.when(
+        data: (stock) => stock[productId] ?? 0,
+        loading: () => 0,
+        error: (_, __) => 0,
+      );
       
       // Don't allow quantity to exceed available stock
       final adjustedQuantity = quantity > currentStock ? currentStock : quantity;

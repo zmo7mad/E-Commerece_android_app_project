@@ -44,7 +44,7 @@ class _StockManagementScreenState extends ConsumerState<StockManagementScreen> {
             : 0;
         stockData[product['id']?.toString() ?? ''] = stockQuantity;
       }
-      ref.read(stockProvider.notifier).initializeStock(stockData);
+      ref.read(stockNotifierProvider.notifier).initializeStock(stockData);
     } catch (e) {
       setState(() {
         _error = 'Failed to load products: $e';
@@ -55,7 +55,7 @@ class _StockManagementScreenState extends ConsumerState<StockManagementScreen> {
 
   Future<void> _updateStock(String productId, int newStock) async {
     try {
-      ref.read(stockProvider.notifier).updateStock(productId, newStock);
+      ref.read(stockNotifierProvider.notifier).updateStock(productId, newStock);
       
       // Show success message
       if (mounted) {

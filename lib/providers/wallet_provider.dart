@@ -6,6 +6,7 @@ import 'package:e_commerece/models/product.dart';
 import 'package:e_commerece/providers/checkout_provider.dart';
 import 'package:e_commerece/providers/cart_provider.dart';
 import 'package:e_commerece/providers/stock_provider.dart';
+import 'package:e_commerece/providers/wallet_provider.dart'; // ADD THIS IMPORT
 import 'package:cached_network_image/cached_network_image.dart';
  
 
@@ -30,6 +31,9 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
   final _phoneController = TextEditingController();
   final _addressController = TextEditingController();
 
+  // Wallet state variables - ADD THESE
+  bool _useWallet = false;
+
   @override
   void initState() {
     super.initState();
@@ -40,8 +44,6 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
       // Try to get user data from Firestore
       _loadUserData(user.uid);
     }
-    
-
   }
 
   Future<void> _loadUserData(String uid) async {
@@ -51,10 +53,35 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
         final data = doc.data() as Map<String, dynamic>;
         _nameController.text = data['name'] ?? '';
         _addressController.text = data['address'] ?? '';
+        _phoneController.text = data['phone'] ?? '';
       }
     } catch (e) {
       print('Error loading user data: $e');
     }
+  }
+
+  // ADD THESE WALLET CALCULATION METHODS
+  double get _walletDeduction {
+    if (!_useWallet) return 0.0;
+    
+    final walletBalance = ref.read(walletNotifierProvider).balance;
+    final orderTotal = _calculateOrderTotal().toDouble();
+    
+    // Use wallet balance up to order total (partial or full payment)
+    return walletBalance >= orderTotal ? orderTotal : walletBalance;
+  }
+
+  double get _remainingAmount {
+    final orderTotal = _calculateOrderTotal().toDouble();
+    return orderTotal - _walletDeduction;
+  }
+
+  int _calculateOrderTotal() {
+    final quantities = ref.read(cartQuantitiesProvider);
+    return widget.cartProducts.fold<int>(
+      0,
+      (sum, p) => sum + p.price * (quantities[p.id] ?? 1),
+    );
   }
 
   Future<void> _completeOrder() async {
@@ -81,7 +108,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
 
     try {
       // Add timeout protection
-      await Future.delayed(const Duration(milliseconds: 100)); // Small delay to prevent UI blocking
+      await Future.delayed(const Duration(milliseconds: 100));
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -114,6 +141,9 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
         }
       }
 
+      final orderTotal = _calculateOrderTotal();
+      final orderId = 'ORD-${DateTime.now().millisecondsSinceEpoch}';
+
       final orderData = {
         'userId': user.uid,
         'userEmail': user.email,
@@ -127,10 +157,12 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
           'image': p.image,
           'quantity': productQuantities[p.id] ?? 1,
         }).toList(),
-        'total': widget.cartProducts.fold<int>(0, (sum, p) => sum + p.price * (productQuantities[p.id] ?? 1)),
+        'total': orderTotal,
+        'walletUsed': _walletDeduction, // ADD THIS
+        'remainingAmount': _remainingAmount, // ADD THIS
         'orderDate': FieldValue.serverTimestamp(),
         'status': 'pending',
-        'orderId': 'ORD-${DateTime.now().millisecondsSinceEpoch}',
+        'orderId': orderId,
       };
 
       // Save order to Firestore
@@ -143,7 +175,6 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
       for (final entry in productQuantities.entries) {
         try {
           final docRef = FirebaseFirestore.instance.collection('Products').doc(entry.key);
-          // Check if product exists before updating
           final docSnapshot = await docRef.get();
           if (docSnapshot.exists) {
             final currentData = docSnapshot.data() as Map<String, dynamic>;
@@ -155,18 +186,24 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
               'stockQuantity': newStock,
             });
           }
-          // If product doesn't exist, skip updating it (don't create new documents)
         } catch (e) {
           print('Warning: Could not update product ${entry.key}: $e');
-          // Continue with other products even if one fails
         }
       }
+
       // Link order to user
-      final userOrdersRef = FirebaseFirestore.instance.collection('Users').doc(user.uid).collection('Orders').doc(orderRef.id);
+      final userOrdersRef = FirebaseFirestore.instance
+          .collection('Users')
+          .doc(user.uid)
+          .collection('Orders')
+          .doc(orderRef.id);
+      
       batch.set(userOrdersRef, {
         'orderId': orderRef.id,
         'createdAt': FieldValue.serverTimestamp(),
-        'total': widget.cartProducts.fold<int>(0, (sum, p) => sum + p.price * (productQuantities[p.id] ?? 1)),
+        'total': orderTotal,
+        'walletUsed': _walletDeduction, // ADD THIS
+        'remainingAmount': _remainingAmount, // ADD THIS
       });
       
       // Commit batch with timeout protection
@@ -181,41 +218,50 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
         print('Batch commit error: $e');
         throw Exception('Failed to update product information: $e');
       }
-// Deduct from wallet if enabled
-if (_useWallet && _walletDeduction > 0) {
-  final deductSuccess = await ref
-      .read(walletNotifierProvider.notifier)
-      .deductFunds(_walletDeduction, orderData['orderId']);
-  
-  if (!deductSuccess) {
-    // If wallet deduction fails, show error but order is still placed
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Warning: Wallet deduction failed'),
-        backgroundColor: Colors.orange,
-      ),
-    );
-  }
-} 
 
-      // Update user's purchase history with quantities and product IDs
+      // Deduct from wallet if enabled - THIS IS THE CRITICAL PART
+      if (_useWallet && _walletDeduction > 0) {
+        final deductSuccess = await ref
+            .read(walletNotifierProvider.notifier)
+            .deductFunds(_walletDeduction, orderId);
+        
+        if (!deductSuccess) {
+          // If wallet deduction fails, still show warning
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Warning: Wallet deduction failed. Please contact support.'),
+                backgroundColor: Colors.orange,
+                duration: Duration(seconds: 5),
+              ),
+            );
+          }
+        }
+      }
+
+      // Update user's purchase history
       await _updateUserPurchaseHistory(user.uid, widget.cartProducts, productQuantities);
 
       if (mounted) {
         // Complete checkout successfully
         ref.read(checkoutNotifierProvider.notifier).completeCheckout();
         
-        // Clear the cart immediately after successful checkout
+        // Clear the cart
         ref.read(cartNotifierProvider.notifier).clearCart();
         
-        // Update stock provider with new stock quantities
+        // Update stock provider
         ref.read(stockNotifierProvider.notifier).updateStockAfterPurchase(productQuantities);
         
-        // Show success message
+        // Show success message with payment details
+        final successMessage = _useWallet && _walletDeduction > 0
+            ? 'Order completed! \$${_walletDeduction.toStringAsFixed(2)} paid from wallet${_remainingAmount > 0 ? ', \$${_remainingAmount.toStringAsFixed(2)} remaining' : ''}'
+            : 'Order completed successfully!';
+        
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Order completed successfully!'),
+          SnackBar(
+            content: Text(successMessage),
             backgroundColor: Colors.green,
+            duration: const Duration(seconds: 4),
           ),
         );
         
@@ -224,7 +270,6 @@ if (_useWallet && _walletDeduction > 0) {
       }
     } catch (e) {
       if (mounted) {
-        // Mark checkout as failed
         ref.read(checkoutNotifierProvider.notifier).failCheckout(e.toString());
         
         ScaffoldMessenger.of(context).showSnackBar(
@@ -236,7 +281,6 @@ if (_useWallet && _walletDeduction > 0) {
       }
     } finally {
       if (mounted) {
-        // Reset processing state
         ref.read(checkoutNotifierProvider.notifier).reset();
       }
     }
@@ -245,15 +289,11 @@ if (_useWallet && _walletDeduction > 0) {
   Future<void> _updateUserPurchaseHistory(String userId, List<Product> products, Map<String, int> quantities) async {
     try {
       final userDocRef = FirebaseFirestore.instance.collection('Users').doc(userId);
-      
-      // Get current user data
       final userDoc = await userDocRef.get();
       
       if (userDoc.exists) {
         final userData = userDoc.data() as Map<String, dynamic>;
-        // Map of productId -> total quantity ever bought
         final Map<String, int> productTotals = Map<String, int>.from(userData['productsBought'] ?? {});
-        // List of product IDs bought at least once
         final Set<String> purchaseIds = Set<String>.from(userData['purchaseHistory'] ?? <String>[]);
 
         for (final Product product in products) {
@@ -268,8 +308,6 @@ if (_useWallet && _walletDeduction > 0) {
           'lastPurchaseDate': FieldValue.serverTimestamp(),
           'totalPurchases': purchaseIds.length,
         });
-        
-        print('User purchase history updated successfully');
       } else {
         final Map<String, int> initialTotals = {};
         for (final Product p in products) {
@@ -281,37 +319,39 @@ if (_useWallet && _walletDeduction > 0) {
           'lastPurchaseDate': FieldValue.serverTimestamp(),
           'totalPurchases': initialTotals.length,
         }, SetOptions(merge: true));
-        
-        print('User document created with purchase history');
       }
     } catch (e) {
       print('Error updating user purchase history: $e');
-
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final quantitiesWatch = ref.watch(cartQuantitiesProvider);
+    final walletState = ref.watch(walletNotifierProvider); // ADD THIS
+    
     final displayTotal = widget.cartProducts.fold<int>(
       0,
       (sum, p) => sum + p.price * (quantitiesWatch[p.id] ?? 1),
     );
+
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.white,
-        title:  Text('Checkout',
-        style: TextStyle(
-          color: Theme.of(context).colorScheme.primary,
-        ),
+        title: Text(
+          'Checkout',
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.primary,
+          ),
         ),
         centerTitle: true,
         elevation: 0,
         leading: IconButton(
-          onPressed: () {
-            Navigator.pop(context);
-          },
-          icon: Icon(Icons.arrow_back_ios_new, color: Theme.of(context).colorScheme.primary,),
+          onPressed: () => Navigator.pop(context),
+          icon: Icon(
+            Icons.arrow_back_ios_new,
+            color: Theme.of(context).colorScheme.primary,
+          ),
         ),
       ),
       body: SingleChildScrollView(
@@ -347,7 +387,7 @@ if (_useWallet && _walletDeduction > 0) {
                           children: [
                             ClipRRect(
                               borderRadius: BorderRadius.circular(8),
-                              child: Container(
+                              child: SizedBox(
                                 width: 50,
                                 height: 50,
                                 child: _ProductImage(image: product.image),
@@ -374,11 +414,14 @@ if (_useWallet && _walletDeduction > 0) {
                                           color: Colors.grey[200],
                                           borderRadius: BorderRadius.circular(10),
                                         ),
-                                        child: Text('x${(ref.watch(cartQuantitiesProvider)[product.id] ?? 1)}', style: const TextStyle(fontSize: 12)),
+                                        child: Text(
+                                          'x${(ref.watch(cartQuantitiesProvider)[product.id] ?? 1)}',
+                                          style: const TextStyle(fontSize: 12),
+                                        ),
                                       ),
                                       const SizedBox(width: 8),
                                       Text(
-                                        ' \$${product.price}',
+                                        '\$${product.price}',
                                         style: TextStyle(
                                           fontSize: 12,
                                           color: Colors.grey[700],
@@ -412,7 +455,7 @@ if (_useWallet && _walletDeduction > 0) {
                             ),
                           ),
                           Text(
-                            '\$' + displayTotal.toString(),
+                            '\$$displayTotal',
                             style: TextStyle(
                               fontSize: 24,
                               fontWeight: FontWeight.bold,
@@ -426,6 +469,176 @@ if (_useWallet && _walletDeduction > 0) {
                 ),
               ),
               const SizedBox(height: 24),
+
+              // ============ WALLET PAYMENT SECTION - ADD THIS ============
+              Card(
+                elevation: 4,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.account_balance_wallet,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Payment Method',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      
+                      // Wallet Balance Display
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.deepPurple.shade50,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: Colors.deepPurple.shade200,
+                            width: 1,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Wallet Balance',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey[600],
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  '\$${walletState.balance.toStringAsFixed(2)}',
+                                  style: const TextStyle(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.deepPurple,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            Icon(
+                              Icons.account_balance_wallet_outlined,
+                              color: Colors.deepPurple.shade300,
+                              size: 32,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      
+                      // Use Wallet Checkbox
+                      CheckboxListTile(
+                        value: _useWallet,
+                        onChanged: (value) {
+                          setState(() {
+                            _useWallet = value ?? false;
+                          });
+                        },
+                        title: const Text(
+                          'Use E-Wallet for payment',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        subtitle: walletState.balance == 0
+                            ? const Text(
+                                'Your wallet is empty',
+                                style: TextStyle(
+                                  color: Colors.red,
+                                  fontSize: 12,
+                                ),
+                              )
+                            : null,
+                        activeColor: Colors.deepPurple,
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                      
+                      // Payment Breakdown (only show when wallet is enabled)
+                      if (_useWallet) ...[
+                        const Divider(height: 24),
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade50,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: Colors.green.shade200,
+                              width: 1,
+                            ),
+                          ),
+                          child: Column(
+                            children: [
+                              _buildPaymentRow(
+                                'Order Total',
+                                '\$${displayTotal.toStringAsFixed(2)}',
+                                Colors.black87,
+                              ),
+                              const SizedBox(height: 12),
+                              _buildPaymentRow(
+                                'Wallet Deduction',
+                                '-\$${_walletDeduction.toStringAsFixed(2)}',
+                                Colors.green.shade700,
+                                isBold: true,
+                              ),
+                              const Divider(height: 24),
+                              _buildPaymentRow(
+                                'Remaining to Pay',
+                                '\$${_remainingAmount.toStringAsFixed(2)}',
+                                Theme.of(context).colorScheme.primary,
+                                isBold: true,
+                                isLarge: true,
+                              ),
+                              if (_remainingAmount == 0) ...[
+                                const SizedBox(height: 12),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.check_circle,
+                                      color: Colors.green.shade700,
+                                      size: 20,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'Fully paid with wallet',
+                                      style: TextStyle(
+                                        color: Colors.green.shade700,
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              // ============ END WALLET SECTION ============
 
               // Customer Information
               Text(
@@ -548,8 +761,8 @@ if (_useWallet && _walletDeduction > 0) {
                   child: ref.watch(checkoutNotifierProvider).isProcessing
                       ? Row(
                           mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const SizedBox(
+                          children: const [
+                            SizedBox(
                               height: 20,
                               width: 20,
                               child: CircularProgressIndicator(
@@ -557,8 +770,8 @@ if (_useWallet && _walletDeduction > 0) {
                                 valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                               ),
                             ),
-                            const SizedBox(width: 12),
-                            const Text(
+                            SizedBox(width: 12),
+                            Text(
                               'Processing...',
                               style: TextStyle(
                                 fontSize: 16,
@@ -567,9 +780,11 @@ if (_useWallet && _walletDeduction > 0) {
                             ),
                           ],
                         )
-                      : const Text(
-                          'Complete Order',
-                          style: TextStyle(
+                      : Text(
+                          _useWallet && _remainingAmount == 0
+                              ? 'Complete Order (Paid with Wallet)'
+                              : 'Complete Order',
+                          style: const TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
                           ),
@@ -577,11 +792,35 @@ if (_useWallet && _walletDeduction > 0) {
                 ),
               ),
               const SizedBox(height: 16),
-
             ],
           ),
         ),
       ),
+    );
+  }
+
+  // ADD THIS HELPER METHOD
+  Widget _buildPaymentRow(String label, String amount, Color color, {bool isBold = false, bool isLarge = false}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: isLarge ? 16 : 14,
+            fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
+            color: Colors.black87,
+          ),
+        ),
+        Text(
+          amount,
+          style: TextStyle(
+            fontSize: isLarge ? 20 : 16,
+            fontWeight: isBold ? FontWeight.bold : FontWeight.w600,
+            color: color,
+          ),
+        ),
+      ],
     );
   }
 
@@ -606,10 +845,9 @@ class _ProductImage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (_isDataUrl) {
-      // Data URL: decode and render
       try {
         final uri = Uri.parse(image);
-        final data = uri.data; // data URI
+        final data = uri.data;
         if (data != null) {
           return Image.memory(
             data.contentAsBytes(), 
